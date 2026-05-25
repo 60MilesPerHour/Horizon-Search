@@ -2,7 +2,7 @@
 
 A self-hosted, privacy-first search engine — a custom theme + AI side panel built on top of [SearXNG](https://github.com/searxng/searxng).
 
-Sibling project to [**Horizon**](https://github.com/60MilesPerHour/Horizon), the multi-provider AI chat client. Shared brand DNA (OLED true-black, Pacifico wordmark, sunset-orange accent) and the same Ollama-first, bring-your-own-keys philosophy — Horizon is where you talk to your models, Horizon Search is where they help you find things.
+Sibling project to [**Horizon**](https://github.com/60MilesPerHour/Horizon), the multi-provider AI chat client. Shared brand DNA (OLED true-black, Pacifico wordmark, sunset-orange accent). Horizon is where you talk to your models (Ollama + Claude + OpenAI + Gemini); Horizon Search is the **Ollama-only** sibling that helps you find things — see [AI side panel](#ai-side-panel-optional) for why cloud providers stay on the chat side.
 
 - OLED true-black UI, Pacifico wordmark, sunset-orange accent
 - Card mosaic for results, news, and videos
@@ -38,6 +38,8 @@ Default port: `:8888`. Open `http://localhost:8888`.
 ## AI side panel (optional)
 
 Bring-your-own Ollama. Click `horizon` in the bottom bar → enable AI panel → enter your Ollama URL + pick a tool-capable model → save. The pill in the search row turns orange when the panel is open.
+
+> **Ollama-only by design.** No Claude / OpenAI / Gemini adapters here, and that's deliberate. Cloud providers from a browser would either require proxying inference through the SearXNG container (which would break the "no inference data ever touches the Horizon backend" promise) or stashing raw API keys in `localStorage` (strictly worse than the OS keystore the main [Horizon](https://github.com/60MilesPerHour/Horizon) app uses). Ollama dodges both because the call is loopback / LAN, never third-party. If you want a chat app on top of Claude / OpenAI / Gemini, that's what main Horizon is for.
 
 **Model requirements:** only tool-capable models are listed (capability filtered via Ollama's `/api/show`). Tested on:
 - `llama3.1` / `llama3.2` / `llama3.3`
