@@ -2,6 +2,8 @@
 
 A self-hosted, privacy-first search engine — a custom theme + AI side panel built on top of [SearXNG](https://github.com/searxng/searxng).
 
+Sibling project to [**Horizon**](https://github.com/60MilesPerHour/Horizon), the multi-provider AI chat client. Shared brand DNA (OLED true-black, Pacifico wordmark, sunset-orange accent) and the same Ollama-first, bring-your-own-keys philosophy — Horizon is where you talk to your models, Horizon Search is where they help you find things.
+
 - OLED true-black UI, Pacifico wordmark, sunset-orange accent
 - Card mosaic for results, news, and videos
 - Maps tab powered by Foursquare + OpenStreetMap (Leaflet)
@@ -102,6 +104,10 @@ docker compose up -d --force-recreate searxng
 - The AI panel is entirely opt-in; the rest of the search engine works without it.
 - Image thumbnails for Bing News bypass SearXNG's `image_proxy` (the server IP is blocked) — the browser fetches them directly with `referrerpolicy="no-referrer"`.
 - The Maps tab uses Foursquare Places for venue data and OpenStreetMap/Nominatim for geocoding. Both calls go through small backend proxies (Foursquare key never reaches the browser).
+
+## Companion project
+
+If you want to *talk to* the same Ollama server (or to Claude / OpenAI / Gemini) outside the browser, check out [**Horizon**](https://github.com/60MilesPerHour/Horizon) — the multi-provider Flutter chat client this project is branded after. Same author, same OLED + Pacifico look, same Ollama-first ethos.
 
 ## License
 
