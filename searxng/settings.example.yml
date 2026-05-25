@@ -1,0 +1,169 @@
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Horizon"
+  privacypolicy_url: false
+  contact_url: false
+  enable_metrics: false
+
+search:
+  safe_search: 0
+  autocomplete: "google"
+  default_lang: "en-US"
+  formats:
+    - html
+    - json
+  suspended_times:
+    SearxEngineAccessDenied: 3600
+    SearxEngineCaptcha: 86400
+    SearxEngineTooManyRequests: 300
+    cf_SearxEngineCaptcha: 1296000
+    cf_SearxEngineAccessDenied: 3600
+    recaptcha_SearxEngineCaptcha: 604800
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "GENERATE_WITH_openssl_rand_hex_32"
+  limiter: false
+  image_proxy: true
+  method: "POST"
+  default_http_headers:
+    X-Content-Type-Options: nosniff
+    X-Robots-Tag: noindex, nofollow
+    Referrer-Policy: no-referrer
+
+outgoing:
+  request_timeout: 4.0
+  max_request_timeout: 10.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+  retries: 1
+
+ui:
+  static_use_hash: true
+  default_locale: "en"
+  query_in_title: false
+  infinite_scroll: true
+  default_theme: simple
+  theme_args:
+    simple_style: black
+  results_on_new_tab: false
+  search_on_category_select: true
+  hotkeys: default
+  url_formatting: pretty
+  center_alignment: false
+
+engines:
+  # Google — primary engine, max weight
+  - name: google
+    engine: google
+    shortcut: go
+    weight: 3
+    disabled: false
+
+  - name: google images
+    engine: google_images
+    shortcut: goi
+    weight: 3
+    disabled: false
+
+  - name: google news
+    engine: google_news
+    shortcut: gon
+    weight: 2
+    disabled: false
+
+  - name: google videos
+    engine: google_videos
+    shortcut: gov
+    weight: 2
+    disabled: false
+
+  - name: google scholar
+    engine: google_scholar
+    shortcut: gos
+    weight: 2
+    disabled: false
+
+  # Fallbacks for when Google is rate-limited
+  - name: brave
+    engine: brave
+    shortcut: br
+    weight: 1
+    disabled: false
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    weight: 1
+    disabled: false
+
+  # Re-enabled for better consensus ranking on exact/navigational queries
+  - name: bing
+    engine: bing
+    shortcut: bi
+    weight: 2
+    disabled: false
+
+  - name: bing images
+    engine: bing_images
+    shortcut: bii
+    weight: 2
+    disabled: false
+
+  - name: bing videos
+    engine: bing_videos
+    shortcut: biv
+    weight: 1
+    disabled: false
+
+  - name: yahoo
+    engine: yahoo
+    disabled: true
+
+  - name: qwant
+    engine: qwant
+    disabled: true
+
+  # Tor-only dark web engines — no Tor, so disable to keep logs clean
+  - name: ahmia
+    engine: ahmia
+    disabled: true
+
+  - name: torch
+    engine: torch
+    disabled: true
+
+  # Icon engines pollute image search ("cat" → 200+ unrelated SVG icons)
+  - name: lucide
+    disabled: true
+
+  - name: devicons
+    disabled: true
+
+  # Boost reliable image providers since google/ddg images are blocked
+  - name: qwant images
+    weight: 2
+
+  - name: flickr
+    weight: 2
+
+  - name: wikicommons.images
+    weight: 1
+
+  - name: openverse
+    weight: 1
+
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+    weight: 2
+    disabled: false
+
+  - name: reddit
+    engine: reddit
+    disabled: true
+

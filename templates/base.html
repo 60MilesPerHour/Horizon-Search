@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html class="no-js theme-{{ preferences.get_value('simple_style') or 'auto' }}" lang="en" {% if rtl %}dir="rtl"{% endif %}>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Language" content="en">
+  <meta name="endpoint" content="{{ endpoint }}">
+  <meta name="description" content="Horizon — private search">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noarchive">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %}Horizon</title>
+  <script type="module" src="{{ url_for('static', filename='sxng-core.min.js') }}" client_settings="{{ client_settings }}"></script>
+  {% block meta %}{% endblock %}
+  {% if rtl %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='sxng-rtl.min.css') }}" type="text/css" media="screen">
+  {% else %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='sxng-ltr.min.css') }}" type="text/css" media="screen">
+  {% endif %}
+  {% if get_setting('server.limiter') or get_setting('server.public_instance') %}
+  <link rel="stylesheet" href="{{ url_for('client_token', token=link_token) }}" type="text/css">
+  {% endif %}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  {# Preload Pacifico so the wordmark hits as soon as possible (no FOUT to cursive) #}
+  <link rel="preload" as="font" type="font/ttf" crossorigin
+        href="https://fonts.gstatic.com/s/pacifico/v23/FwZY7-Qmy14u9lezJ96A.ttf">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Pacifico&display=swap" rel="stylesheet">
+  <link rel="icon" href="{{ url_for('static', filename='img/horizon-logo.png') }}" type="image/png">
+  {% block head %}
+  <link title="{{ instance_name }}" type="application/opensearchdescription+xml" rel="search" href="{{ opensearch_url }}">
+  {% endblock %}
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      /* OLED true-black per Flutter Horizon palette */
+      --bg: #000000;
+      --surface-1: #0a0a0a;
+      --surface-2: #121212;
+      --surface: rgba(255,255,255,0.025);
+      --border: rgba(255,255,255,0.06);
+      --border-hover: rgba(255,255,255,0.14);
+      --text: #e8e4df;
+      --text-mid: #a09a94;
+      --text-dim: #706a64;
+      /* Accent: sunset-orange from the logo */
+      --accent: #ff7200;
+      --accent-warm: #ff9b3d;     /* sun glow */
+      --accent-deep: #d94e1f;     /* sky red */
+      --ocean: #2a7fb0;           /* logo ocean blue, used sparingly */
+      --cat-source: #ff7200;
+      --cat-analysis: #ff9c4a;
+      --cat-opinion: #ffc87a;
+      --cat-media: #ffe4a8;
+
+      /* Override SearXNG theme variables to kill grey bleed and blue/purple */
+      --color-base-background: #000000;
+      --color-base-font: #e8e4df;
+      --color-autocomplete-background: #111113;
+      --color-autocomplete-background-hover: rgba(255,255,255,0.04);
+      --color-autocomplete-font: #e8e4df;
+      --color-autocomplete-border: rgba(255,255,255,0.12);
+      --color-search-background: transparent;
+      --color-search-border: rgba(255,255,255,0.1);
+      --color-search-font: #e8e4df;
+      --color-toolkit-input-text-font: #e8e4df;
+      --color-toolkit-select-background: #111113;
+      --color-result-background: transparent;
+      --color-result-border: rgba(255,255,255,0.06);
+      /* Kill SearXNG blue/purple link and UI colors */
+      --color-url-font: #ff7200;
+      --color-url-visited-font: rgba(255,114,0,0.6);
+      --color-result-link-font: #ff7200;
+      --color-result-link-font-highlight: #ff7200;
+      --color-result-link-visited-font: rgba(255,114,0,0.6);
+      --color-btn-background: #ff7200;
+      --color-categories-item-selected-font: #ff7200;
+      --color-categories-item-border-selected: #ff7200;
+    }
+    html, body {
+      background: var(--bg) !important;
+      color: var(--text) !important;
+      font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif !important;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      height: 100%;
+    }
+    /* Kill grey backgrounds on any SearXNG-styled inputs */
+    input, input[type="text"], input[type="search"], textarea {
+      background: transparent !important;
+      color: var(--text) !important;
+    }
+    main { margin: 0 !important; padding: 0 !important; max-width: none !important; width: 100% !important; }
+    #links_on_top, footer, #backToTop, #result_count, #sidebar { display: none !important; }
+    body::before {
+      content: ''; position: fixed; inset: 0; opacity: 0.015; pointer-events: none; z-index: 9999;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+    ::selection { background: rgba(255,114,0,0.2); }
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    /* ── Autocomplete — nuke SearXNG defaults ── */
+    .autocomplete,
+    .autocomplete.open {
+      position: absolute !important;
+      top: 100% !important;
+      left: 0 !important;
+      right: 0 !important;
+      width: auto !important;
+      max-width: none !important;
+      margin: 0 !important;
+      background: #111113 !important;
+      border: 1px solid rgba(255,255,255,0.12) !important;
+      border-top: none !important;
+      border-radius: 0 0 10px 10px !important;
+      z-index: 5000 !important;
+      overflow-y: auto !important;
+    }
+    .autocomplete { max-height: 0 !important; overflow-y: hidden !important; border: none !important; }
+    .autocomplete.open { max-height: 280px !important; color: var(--text) !important; }
+    .autocomplete.open:empty { display: none !important; }
+    .autocomplete > ul { list-style: none !important; padding: 4px 0 !important; margin: 0 !important; }
+    .autocomplete > ul > li {
+      padding: 10px 22px !important;
+      font-size: 13px !important;
+      color: var(--text-mid) !important;
+      cursor: pointer !important;
+      transition: background 0.12s, color 0.12s !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+    }
+    .autocomplete > ul > li::before {
+      content: '';
+      display: inline-block !important;
+      width: 12px !important;
+      height: 12px !important;
+      flex-shrink: 0 !important;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235a5550' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") !important;
+      background-size: contain !important;
+      background-repeat: no-repeat !important;
+    }
+    .autocomplete > ul > li:hover,
+    .autocomplete > ul > li.active,
+    .autocomplete > ul > li.selected {
+      background: rgba(255,255,255,0.04) !important;
+      color: var(--text) !important;
+    }
+    @keyframes seek-fade-up { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes seek-fade-in { from { opacity:0; } to { opacity:1; } }
+    @keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
+    /* ── Shared logo (icon + Pacifico wordmark) ── */
+    .sk-logo, .sk-logo:visited, .sk-logo:link {
+      display:inline-flex !important; align-items:center !important; gap:10px !important;
+      font-family:'Pacifico', cursive !important; font-style:normal !important; font-size:26px !important;
+      font-weight:400 !important;
+      color:var(--text) !important; text-decoration:none !important;
+      flex-shrink:0; transition:opacity 0.2s; letter-spacing:0.1px !important;
+      line-height:1 !important;
+    }
+    .sk-logo::before {
+      content:''; display:inline-block; width:26px; height:26px; flex-shrink:0;
+      background-image: url('/static/themes/simple/img/horizon-logo.png');
+      background-size: cover; background-position: center;
+      border-radius: 50%;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 2px 10px rgba(255,114,0,0.25);
+    }
+    .sk-logo:hover { opacity:0.85; }
+    /* ── Preferences / Info pages — shared layout ── */
+    .sk-sub-header { padding: 22px 56px; border-bottom: 1px solid var(--border); }
+    main.page_with_header { padding: 0 0 80px !important; max-width: none !important; }
+    main.page_with_header h1 { font-family: 'Inter', sans-serif !important; font-size: 26px !important; font-weight: 500 !important; color: var(--text) !important; letter-spacing: -0.3px !important; margin: 36px 56px 24px !important; }
+    main.page_with_header > form { padding: 0 56px; }
+    main.page_with_header > .info-page { padding: 0 56px; max-width: 740px; }
+    /* Info tab nav */
+    main.page_with_header ul.tabs { list-style: none !important; display: flex !important; gap: 0 !important; border-bottom: 1px solid var(--border) !important; margin: 0 56px 32px !important; padding: 0 !important; background: transparent !important; }
+    main.page_with_header ul.tabs li a { display: block !important; padding: 10px 16px !important; font-size: 13px !important; color: var(--text-dim) !important; text-decoration: none !important; border-bottom: 2px solid transparent !important; margin-bottom: -1px !important; transition: color 0.15s, border-color 0.15s !important; background: transparent !important; }
+    main.page_with_header ul.tabs li a:hover { color: var(--text) !important; }
+    main.page_with_header ul.tabs li a.active { color: var(--accent) !important; border-bottom-color: var(--accent) !important; }
+    /* Info page typography */
+    .info-page h1 { font-family: 'Inter', sans-serif !important; font-size: 26px !important; font-weight: 500 !important; color: var(--text) !important; margin-bottom: 20px !important; }
+    .info-page h2 { font-size: 11px !important; font-weight: 600 !important; letter-spacing: 1.5px !important; text-transform: uppercase !important; color: var(--text-dim) !important; margin: 32px 0 10px !important; }
+    .info-page p, .info-page li { color: var(--text-mid) !important; font-size: 14px !important; line-height: 1.8 !important; }
+    .info-page ul { padding-left: 18px !important; margin-bottom: 14px !important; }
+    .info-page code { background: rgba(255,255,255,0.06) !important; padding: 2px 6px !important; border-radius: 3px !important; font-size: 12px !important; color: var(--text) !important; }
+    .info-page a { color: var(--accent) !important; text-decoration: none !important; }
+    .info-page a:hover { text-decoration: underline !important; }
+    /* ── Preferences page — nuke SearXNG blue/purple ── */
+    body.preferences_endpoint { accent-color: var(--accent); }
+    body.preferences_endpoint a { color: var(--accent) !important; }
+    body.preferences_endpoint a:hover { opacity: 0.8 !important; text-decoration: underline !important; }
+    /* Preferences radio-tab labels */
+    body.preferences_endpoint .tabs { flex-wrap: wrap !important; background: transparent !important; border-bottom: 1px solid var(--border) !important; gap: 0 !important; }
+    body.preferences_endpoint .tabs > label { color: var(--text-dim) !important; background: transparent !important; border: none !important; border-bottom: 2px solid transparent !important; padding: 10px 18px !important; font-size: 13px !important; cursor: pointer !important; transition: color 0.15s, border-color 0.15s !important; margin-bottom: -1px !important; }
+    body.preferences_endpoint .tabs > label:hover { color: var(--text) !important; background: transparent !important; }
+    body.preferences_endpoint .tabs > input[type="radio"]:checked + label { color: var(--accent) !important; border-bottom-color: var(--accent) !important; background: transparent !important; }
+    /* Tab content panels */
+    body.preferences_endpoint .tabs > section { background: transparent !important; border: none !important; border-top: 1px solid var(--border) !important; padding-top: 24px !important; }
+    /* Fieldsets */
+    body.preferences_endpoint fieldset { border: 1px solid var(--border) !important; border-radius: 6px !important; background: rgba(255,255,255,0.018) !important; margin-bottom: 10px !important; padding: 14px 16px !important; }
+    body.preferences_endpoint legend { color: var(--text-mid) !important; font-size: 11px !important; font-weight: 600 !important; letter-spacing: 0.8px !important; text-transform: uppercase !important; padding: 0 8px !important; }
+    body.preferences_endpoint .description, body.preferences_endpoint p { color: var(--text-dim) !important; font-size: 13px !important; line-height: 1.6 !important; }
+    body.preferences_endpoint .value { color: var(--text) !important; }
+    /* Selects */
+    body.preferences_endpoint select { background: #111113 !important; color: var(--text) !important; border: 1px solid var(--border) !important; border-radius: 4px !important; padding: 5px 10px !important; font-size: 13px !important; font-family: inherit !important; }
+    body.preferences_endpoint select:focus { border-color: var(--accent) !important; outline: none !important; }
+    /* Save button */
+    body.preferences_endpoint input[type="submit"] { background: var(--accent) !important; color: #fff !important; border: none !important; border-radius: 5px !important; padding: 10px 24px !important; font-size: 13px !important; font-weight: 500 !important; cursor: pointer !important; font-family: inherit !important; letter-spacing: 0.2px !important; }
+    body.preferences_endpoint input[type="submit"]:hover { opacity: 0.88 !important; }
+    /* Reset / back links */
+    body.preferences_endpoint .preferences_back a { color: var(--text-dim) !important; font-size: 13px !important; text-decoration: none !important; }
+    body.preferences_endpoint .preferences_back a:hover { color: var(--text) !important; }
+    body.preferences_endpoint .small_font { color: var(--text-dim) !important; font-size: 12px !important; }
+    /* Engine table */
+    body.preferences_endpoint table { border-collapse: collapse !important; width: 100% !important; }
+    body.preferences_endpoint th { color: var(--text-dim) !important; font-size: 10px !important; font-weight: 600 !important; text-transform: uppercase !important; letter-spacing: 1.2px !important; padding: 8px 12px !important; border-bottom: 1px solid var(--border) !important; text-align: left !important; background: transparent !important; }
+    body.preferences_endpoint td { color: var(--text-mid) !important; font-size: 13px !important; padding: 8px 12px !important; border-bottom: 1px solid rgba(255,255,255,0.03) !important; background: transparent !important; vertical-align: middle !important; }
+    body.preferences_endpoint tr:hover td { background: rgba(255,255,255,0.02) !important; }
+    body.preferences_endpoint .engine-tooltip { background: #111113 !important; border: 1px solid var(--border) !important; color: var(--text-mid) !important; }
+    /* Stacked bar charts in engine stats */
+    body.preferences_endpoint .stacked-bar-chart-value { color: var(--text-mid) !important; }
+    @media (max-width:768px) { .sk-sub-header { padding: 18px 24px; } main.page_with_header h1 { margin: 24px 24px 16px !important; } main.page_with_header > form, main.page_with_header > .info-page { padding: 0 24px; } main.page_with_header ul.tabs { margin: 0 24px 24px !important; } }
+
+    /* ── Horizon settings modal (shared) ── */
+    .sk-hz-modal-backdrop {
+      position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9000;
+      display:flex; align-items:center; justify-content:center;
+      backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
+      animation: seek-fade-in 0.18s ease-out;
+    }
+    .sk-hz-modal {
+      background:var(--surface-1); border:1px solid var(--border); border-radius:14px;
+      width:min(540px, 92vw); max-height:85vh; display:flex; flex-direction:column;
+      box-shadow:0 20px 60px rgba(0,0,0,0.6);
+      animation: seek-fade-up 0.22s ease-out;
+    }
+    .sk-hz-modal-head { display:flex; justify-content:space-between; align-items:center;
+      padding:18px 22px; border-bottom:1px solid var(--border); }
+    .sk-hz-modal-head h2 { font-family:'Inter',sans-serif; font-size:16px; font-weight:600; color:var(--text); letter-spacing:-0.1px; }
+    .sk-hz-modal-close { background:none; border:none; color:var(--text-dim); font-size:18px; cursor:pointer; padding:4px 8px; border-radius:4px; transition:color 0.15s, background 0.15s; line-height:1; }
+    .sk-hz-modal-close:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+    .sk-hz-modal-body { padding:20px 22px; overflow-y:auto; flex:1; }
+    .sk-hz-modal-foot { padding:14px 22px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px; }
+    .sk-hz-section h3 { font-family:'Inter',sans-serif; font-size:11px; font-weight:600; letter-spacing:1.5px; text-transform:uppercase; color:var(--text-dim); margin-bottom:8px; }
+    .sk-hz-sub { font-size:13px; color:var(--text-mid); line-height:1.55; margin-bottom:16px; }
+    .sk-hz-toggle { display:flex; align-items:center; gap:10px; margin-bottom:18px; cursor:pointer; user-select:none; font-size:14px; color:var(--text); }
+    .sk-hz-toggle input { accent-color:var(--accent); width:16px; height:16px; cursor:pointer; }
+    .sk-hz-row { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+    .sk-hz-label { font-size:12px; color:var(--text-dim); font-weight:500; letter-spacing:0.2px; }
+    .sk-hz-input, .sk-hz-modal select.sk-hz-input { background:#0f0f10 !important; border:1px solid var(--border) !important; border-radius:6px !important; padding:9px 12px !important; color:var(--text) !important; font-family:inherit !important; font-size:13px !important; outline:none; transition:border-color 0.15s; width:100%; }
+    .sk-hz-input:focus { border-color:var(--accent) !important; }
+    .sk-hz-actions { display:flex; align-items:center; gap:12px; margin-top:6px; margin-bottom:14px; flex-wrap:wrap; }
+    .sk-hz-btn { background:rgba(255,255,255,0.04); border:1px solid var(--border); color:var(--text); padding:8px 14px; border-radius:6px; font-size:12px; font-family:inherit; cursor:pointer; transition:background 0.15s, border-color 0.15s; }
+    .sk-hz-btn:hover { background:rgba(255,255,255,0.07); border-color:var(--border-hover); }
+    .sk-hz-btn-primary { background:var(--accent); color:#fff; border:none; border-radius:6px; padding:9px 22px; font-size:13px; font-weight:500; font-family:inherit; cursor:pointer; }
+    .sk-hz-btn-primary:hover { opacity:0.88; }
+    .sk-hz-status { font-size:12px; color:var(--text-mid); }
+    .sk-hz-status.ok { color:#9be09b; }
+    .sk-hz-status.err { color:#ff8b8b; }
+    .sk-hz-hint { font-size:11px; color:var(--text-dim); line-height:1.55; }
+    .sk-hz-hint code { background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px; font-size:11px; color:var(--text); }
+  </style>
+</head>
+<body class="{{ endpoint }}_endpoint">
+  <main id="main_{{ self._TemplateReference__context.name|replace('simple/','')|replace('.html','') }}" class="{{ body_class }}">
+    {% if errors %}
+    <div class="dialog-error" role="alert" style="padding:12px 40px;color:#ff6b6b;font-size:13px;">
+      <ul>{% for m in errors %}<li>{{ m }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    <nav id="links_on_top" style="display:none">
+      {%- from 'simple/icons.html' import icon_big -%}
+      {%- block linkto_about -%}<a href="{{ url_for('info', pagename='about') }}" class="link_on_top_about">{{ icon_big('information-circle') }}</a>{%- endblock -%}
+      {%- block linkto_donate -%}{%- endblock -%}
+      {%- block linkto_preferences -%}<a href="{{ url_for('preferences') }}" class="link_on_top_preferences">{{ icon_big('settings') }}</a>{%- endblock -%}
+    </nav>
+    {% block header %}{% endblock %}
+    {% block content %}{% endblock %}
+  </main>
+
+  {# ── Horizon settings modal (shared across all pages) ── #}
+  <div class="sk-hz-modal-backdrop" id="skHzModalBackdrop" style="display:none">
+    <div class="sk-hz-modal" role="dialog" aria-labelledby="skHzModalTitle">
+      <div class="sk-hz-modal-head">
+        <h2 id="skHzModalTitle">Horizon Settings</h2>
+        <button class="sk-hz-modal-close" type="button" aria-label="close" onclick="closeHorizonSettings()">✕</button>
+      </div>
+      <div class="sk-hz-modal-body">
+        <section class="sk-hz-section">
+          <h3>AI Side Panel</h3>
+          <p class="sk-hz-sub">Opt-in. Connects directly from your browser to your own Ollama server — Horizon's server never sees your queries or results. Only tool-capable models (e.g. <code>llama3.1+</code>, <code>qwen2.5+</code>, <code>mistral-nemo</code>) are shown so the panel can drive its own follow-up searches.</p>
+          <label class="sk-hz-toggle">
+            <input type="checkbox" id="skAiEnabled">
+            <span>Enable AI panel</span>
+          </label>
+          <div class="sk-hz-row">
+            <label class="sk-hz-label" for="skAiUrl">Ollama server URL</label>
+            <input type="text" id="skAiUrl" class="sk-hz-input" placeholder="http://192.168.1.50:11434" autocomplete="off" autocapitalize="none" spellcheck="false">
+          </div>
+          <div class="sk-hz-row">
+            <label class="sk-hz-label" for="skAiModel">Model</label>
+            <select id="skAiModel" class="sk-hz-input">
+              <option value="">— test connection to load models —</option>
+            </select>
+          </div>
+          <div class="sk-hz-actions">
+            <button type="button" class="sk-hz-btn" onclick="testOllama()">Test connection</button>
+            <span class="sk-hz-status" id="skAiStatus"></span>
+          </div>
+          <p class="sk-hz-hint">If the test fails with a network error, set <code>OLLAMA_ORIGINS=*</code> (or your Horizon domain) on the Ollama host and restart it — Ollama blocks cross-origin browser requests by default.</p>
+        </section>
+      </div>
+      <div class="sk-hz-modal-foot">
+        <button type="button" class="sk-hz-btn" onclick="closeHorizonSettings()">Cancel</button>
+        <button type="button" class="sk-hz-btn-primary" onclick="saveHorizonSettings()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  window.HorizonSettings = (function(){
+    var KEY = 'horizon_ai';
+    function load() {
+      try { return Object.assign({enabled:false, url:'', model:''}, JSON.parse(localStorage.getItem(KEY) || '{}')); }
+      catch(e) { return {enabled:false, url:'', model:''}; }
+    }
+    function save(s) { localStorage.setItem(KEY, JSON.stringify(s)); }
+    return { load: load, save: save };
+  })();
+
+  function openHorizonSettings() {
+    var s = window.HorizonSettings.load();
+    document.getElementById('skAiEnabled').checked = !!s.enabled;
+    document.getElementById('skAiUrl').value = s.url || '';
+    var sel = document.getElementById('skAiModel');
+    sel.innerHTML = s.model
+      ? '<option value="' + s.model.replace(/"/g,'&quot;') + '">' + s.model + '</option>'
+      : '<option value="">— test connection to load models —</option>';
+    sel.value = s.model || '';
+    var st = document.getElementById('skAiStatus');
+    st.textContent = ''; st.className = 'sk-hz-status';
+    document.getElementById('skHzModalBackdrop').style.display = 'flex';
+  }
+
+  function closeHorizonSettings() {
+    document.getElementById('skHzModalBackdrop').style.display = 'none';
+  }
+
+  function saveHorizonSettings() {
+    var url = (document.getElementById('skAiUrl').value || '').trim().replace(/\/+$/, '');
+    var model = document.getElementById('skAiModel').value || '';
+    var enabled = document.getElementById('skAiEnabled').checked;
+    if (enabled && (!url || !model)) {
+      var st = document.getElementById('skAiStatus');
+      st.textContent = 'set URL + model before enabling';
+      st.className = 'sk-hz-status err';
+      return;
+    }
+    window.HorizonSettings.save({ enabled: enabled, url: url, model: model });
+    closeHorizonSettings();
+    document.dispatchEvent(new CustomEvent('horizon:settings-changed'));
+  }
+
+  function testOllama() {
+    var url = (document.getElementById('skAiUrl').value || '').trim().replace(/\/+$/, '');
+    var status = document.getElementById('skAiStatus');
+    var sel = document.getElementById('skAiModel');
+    if (!url) { status.textContent = 'enter a URL first'; status.className = 'sk-hz-status err'; return; }
+    status.textContent = 'connecting…'; status.className = 'sk-hz-status';
+    fetch(url + '/api/tags', { headers: { 'Accept': 'application/json' } })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(j){
+        var names = (j.models || []).map(function(m){ return m.name || m.model; }).filter(Boolean);
+        if (!names.length) {
+          status.textContent = 'connected, but no models are installed on this server';
+          status.className = 'sk-hz-status err';
+          return null;
+        }
+        status.textContent = 'checking ' + names.length + ' model' + (names.length===1?'':'s') + ' for tool support…';
+        return Promise.all(names.map(function(name){
+          return fetch(url + '/api/show', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ model: name })
+          })
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(info){
+            if (!info) return null;
+            var caps = info.capabilities || [];
+            return caps.indexOf('tools') !== -1 ? name : null;
+          })
+          .catch(function(){ return null; });
+        })).then(function(filtered){ return filtered.filter(Boolean); });
+      })
+      .then(function(toolModels){
+        if (toolModels === null) return;
+        if (!toolModels || !toolModels.length) {
+          status.textContent = 'no tool-capable models on this server. Install one (e.g. llama3.1, qwen2.5, mistral-nemo).';
+          status.className = 'sk-hz-status err';
+          sel.innerHTML = '<option value="">— no tool-capable models —</option>';
+          return;
+        }
+        var prev = sel.value;
+        sel.innerHTML = '';
+        toolModels.forEach(function(name){
+          var opt = document.createElement('option');
+          opt.value = name; opt.textContent = name; sel.appendChild(opt);
+        });
+        if (prev && toolModels.indexOf(prev) !== -1) sel.value = prev;
+        status.textContent = 'connected · ' + toolModels.length + ' tool-capable model' + (toolModels.length===1?'':'s');
+        status.className = 'sk-hz-status ok';
+      })
+      .catch(function(e){
+        var msg = (e && e.message) || 'failed';
+        if (msg.indexOf('Failed to fetch') !== -1 || msg.indexOf('NetworkError') !== -1 || msg.indexOf('CORS') !== -1) {
+          msg = 'cannot reach server — check the URL or CORS (hint below)';
+        }
+        status.textContent = msg;
+        status.className = 'sk-hz-status err';
+      });
+  }
+
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') {
+      var bd = document.getElementById('skHzModalBackdrop');
+      if (bd && bd.style.display === 'flex') closeHorizonSettings();
+    }
+  });
+  document.getElementById('skHzModalBackdrop').addEventListener('click', function(e){
+    if (e.target === this) closeHorizonSettings();
+  });
+  </script>
+</body>
+</html>

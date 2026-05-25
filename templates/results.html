@@ -1,0 +1,2284 @@
+{% extends "simple/base.html" %}
+{% from 'simple/icons.html' import icon_big, icon_small %}
+
+{% macro engine_data_form(engine_data) -%}
+{% for engine_name, kv_data in engine_data.items() %}{% for k, v in kv_data.items() %}
+<input type="hidden" name="engine_data-{{ engine_name }}-{{ k|e }}" value="{{ v|e }}">
+{% endfor %}{% endfor %}
+{%- endmacro %}
+
+{% macro hidden_fields() %}
+<input type="hidden" name="language" value="{{ current_language }}">
+<input type="hidden" name="safesearch" value="{{ safesearch }}">
+<input type="hidden" name="time_range" value="{{ time_range }}">
+<input type="hidden" name="theme" value="{{ theme }}">
+{% if timeout_limit %}<input type="hidden" name="timeout_limit" value="{{ timeout_limit|e }}">{% endif %}
+{% endmacro %}
+
+{% block title %}{% if query_in_title %}{{ q|e }} — {% endif %}{% endblock %}
+{% block meta %}
+<link rel="alternate" type="application/rss+xml" title="Horizon: {{ q|e }}"
+  href="{{ url_for('search', _external=True) }}?q={{ q|urlencode }}&categories={{ selected_categories|join(',') }}&pageno={{ pageno }}&time_range={{ time_range }}&language={{ current_language }}&safesearch={{ safesearch }}&format=rss">
+{% endblock %}
+
+{% block content %}
+{% set active_tab = 'all' %}
+{% if 'images' in selected_categories %}{% set active_tab = 'images' %}
+{% elif 'news' in selected_categories %}{% set active_tab = 'news' %}
+{% elif 'videos' in selected_categories %}{% set active_tab = 'videos' %}
+{% elif 'map' in selected_categories %}{% set active_tab = 'maps' %}{% endif %}
+
+<div class="sk-app">
+
+  {# ── Header ── #}
+  <div class="sk-header">
+    <div class="sk-search-row">
+      <a href="{{ url_for('index') }}" class="sk-logo">Horizon</a>
+      <span class="sk-divider"></span>
+      <div class="sk-input-wrap">
+        <form id="search" method="{{ method or 'POST' }}" action="{{ url_for('search') }}" role="search">
+          <input id="q" name="q" type="text" value="{{ q|e }}" placeholder="search anything..."
+                 autocomplete="off" autocapitalize="none" spellcheck="false" autocorrect="off"
+                 class="sk-input" tabindex="1">
+          <div class="autocomplete hide_if_nojs"><ul></ul></div>
+          <button id="send_search" type="submit" tabindex="2" aria-label="search"
+                  style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;"></button>
+          {% for cat in selected_categories %}
+          <input type="hidden" name="category_{{ cat }}" value="1">
+          {% endfor %}
+          {{ hidden_fields() }}
+          {{ engine_data_form(engine_data) }}
+        </form>
+      </div>
+      <span class="sk-meta">
+        {% if results %}<em>{{ results|length }}</em> results{% if number_of_results and number_of_results != '0' %} · <em>{{ number_of_results }}</em> total{% endif %}{% endif %}
+      </span>
+      <button type="button" class="sk-ai-pill" id="skAiPill" onclick="toggleAiPanel()" aria-pressed="false" aria-label="toggle AI panel">
+        <span class="sk-ai-pill-dot"></span>
+        <span class="sk-ai-pill-label">AI panel</span>
+      </button>
+    </div>
+
+    {# Tabs #}
+    <div class="sk-tabs">
+      {% for cat_key, tab_label in [('general','all'),('images','images'),('news','news'),('map','maps'),('videos','videos')] %}
+      <form method="{{ method or 'POST' }}" action="{{ url_for('search') }}" style="display:contents">
+        <input type="hidden" name="q" value="{{ q|e }}">
+        <input type="hidden" name="category_{{ cat_key }}" value="1">
+        {{ hidden_fields() }}
+        <button type="submit" class="sk-tab{% if active_tab == tab_label %} sk-tab-on{% endif %}">{{ tab_label }}</button>
+      </form>
+      {% endfor %}
+    </div>
+
+  </div>
+
+  {# ── Content ── #}
+  <div class="sk-content sk-content-{{ active_tab }}"{% if active_tab == 'maps' %} style="overflow:hidden;padding:0;"{% endif %}>
+
+    {# ══ ALL TAB ══ #}
+    {% if active_tab == 'all' %}
+    <div class="sk-main-col">
+
+      {% if answers %}
+      <div class="sk-answer">
+        {% for a in answers %}<div class="sk-answer-text">{{ a.answer }}</div>{% endfor %}
+      </div>
+      {% endif %}
+
+      {% if results %}
+        {# Featured — first result as an elevated card #}
+        {% set r0 = results[0] %}
+        {% set r0_thumb = r0.thumbnail or r0.img_src %}
+        <a href="{{ r0.url }}" class="sk-feat-link" target="_blank" rel="noopener noreferrer">
+          <article class="sk-featured">
+            <div class="sk-feat-badge"><span class="sk-feat-dot"></span>top result</div>
+            <div class="sk-feat-body">
+              <div class="sk-feat-main">
+                <div class="sk-feat-src">
+                  <img class="sk-favicon" src="https://www.google.com/s2/favicons?domain={{ r0.parsed_url.netloc }}&sz=32" alt="" loading="lazy" referrerpolicy="no-referrer"
+                       onerror="this.style.display='none'">
+                  <span>{{ r0.parsed_url.netloc }}{% if r0.engine %} · {{ r0.engine }}{% endif %}</span>
+                </div>
+                <h2 class="sk-feat-title">{{ r0.title|striptags }}</h2>
+                {% if r0.content %}<p class="sk-feat-snip">{{ r0.content|striptags|truncate(240) }}</p>{% endif %}
+              </div>
+              {% if r0_thumb %}
+              <div class="sk-feat-thumb">
+                <img src="{{ r0_thumb }}" alt="" loading="lazy" referrerpolicy="no-referrer"
+                     onerror="var t=this.closest('.sk-feat-thumb'); if(t) t.remove();">
+              </div>
+              {% endif %}
+            </div>
+          </article>
+        </a>
+
+        {# Remaining results — tile mosaic mirroring news. Med/small alternation with dense packing. #}
+        <div class="sk-results-list">
+          {% for r in results[1:] %}
+          {% set r_thumb = r.thumbnail or r.img_src %}
+          {% if loop.index0 % 4 in [2, 3] %}{% set rtile = 'small' %}
+          {% else %}{% set rtile = 'med' %}{% endif %}
+          {% if rtile == 'small' %}{% set show_rthumb = false %}{% else %}{% set show_rthumb = r_thumb and true or false %}{% endif %}
+          <a href="{{ r.url }}" class="sk-result-link sk-res-tile-{{ rtile }}" target="_blank" rel="noopener noreferrer">
+            <article class="sk-result{% if not show_rthumb %} sk-result-text{% endif %}" style="animation-delay:{{ loop.index0 * 0.02 }}s">
+              <div class="sk-result-body">
+                <div class="sk-result-src">
+                  <img class="sk-favicon" src="https://www.google.com/s2/favicons?domain={{ r.parsed_url.netloc }}&sz=32" alt="" loading="lazy" referrerpolicy="no-referrer"
+                       onerror="this.style.display='none'">
+                  <span>{{ r.parsed_url.netloc }}{% if r.engine %} · {{ r.engine }}{% endif %}</span>
+                </div>
+                <h3 class="sk-result-title">{{ r.title|striptags }}</h3>
+                {% if r.content and rtile != 'small' %}<p class="sk-result-snip">{{ r.content|striptags|truncate(200) }}</p>{% endif %}
+              </div>
+              {% if show_rthumb %}
+              <div class="sk-result-thumb">
+                <img src="{{ r_thumb }}" alt="" loading="lazy" referrerpolicy="no-referrer"
+                     onerror="var t=this.closest('.sk-result-thumb'); var c=t&&t.closest('.sk-result'); if(t) t.remove(); if(c) c.classList.add('sk-result-text');">
+              </div>
+              {% endif %}
+            </article>
+          </a>
+          {% endfor %}
+        </div>
+
+        {# Pagination #}
+        {% if paging %}
+        <div class="sk-pages">
+          {% if pageno > 1 %}
+          <form method="{{ method or 'POST' }}" action="{{ url_for('search') }}" style="display:contents">
+            <input type="hidden" name="q" value="{{ q|e }}">
+            {% for c in selected_categories %}<input type="hidden" name="category_{{ c }}" value="1">{% endfor %}
+            <input type="hidden" name="pageno" value="{{ pageno-1 }}">
+            {{ hidden_fields() }}{{ engine_data_form(engine_data) }}
+            <button type="submit" class="sk-pgbtn">← prev</button>
+          </form>
+          {% endif %}
+          {% if results|count > 0 %}
+          <form method="{{ method or 'POST' }}" action="{{ url_for('search') }}" style="display:contents">
+            <input type="hidden" name="q" value="{{ q|e }}">
+            {% for c in selected_categories %}<input type="hidden" name="category_{{ c }}" value="1">{% endfor %}
+            <input type="hidden" name="pageno" value="{{ pageno+1 }}">
+            {{ hidden_fields() }}{{ engine_data_form(engine_data) }}
+            <button type="submit" class="sk-pgbtn">next →</button>
+          </form>
+          {% endif %}
+        </div>
+        {% endif %}
+
+      {% elif not answers %}
+      <div class="sk-noresults">
+        <p style="font-family:'Inter',sans-serif;font-style:italic;font-size:18px;color:var(--text-dim)">
+          nothing found for <em style="color:var(--text-mid)">{{ q|e }}</em>
+        </p>
+        {% if suggestions %}
+        <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
+          {% for s in suggestions %}
+          {% set sq = s if s is string else (s.title or s.url or '') %}
+          <form method="{{ method or 'POST' }}" action="{{ url_for('search') }}" style="display:contents">
+            <input type="hidden" name="q" value="{{ sq|e }}">
+            <input type="hidden" name="category_general" value="1">
+            {{ hidden_fields() }}
+            <button type="submit" class="sk-tag">{{ sq }}</button>
+          </form>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    {# ─── Right rail — persistent knowledge + related ─── #}
+    <aside class="sk-rail">
+      {# Knowledge panel — from SearXNG infoboxes (wikipedia/wikidata) #}
+      {% if infoboxes %}
+        {% for ib in infoboxes[:1] %}
+        <div class="sk-kp">
+          {% if ib.img_src %}
+          <div class="sk-kp-hero" style="background-image:url('{{ image_proxify(ib.img_src) }}')"></div>
+          {% endif %}
+          <div class="sk-kp-body">
+            <div class="sk-kp-kind">knowledge</div>
+            {% set first_url = (ib.urls|selectattr('official')|list|first) or (ib.urls|first if ib.urls else None) %}
+            {% if first_url %}
+              <a href="{{ first_url.url }}" target="_blank" rel="noopener noreferrer" class="sk-kp-title-link">
+                <h2 class="sk-kp-title">{{ ib.infobox }}</h2>
+              </a>
+            {% else %}
+              <h2 class="sk-kp-title">{{ ib.infobox }}</h2>
+            {% endif %}
+            {% if ib.content %}<p class="sk-kp-content">{{ ib.content|striptags|truncate(280) }}</p>{% endif %}
+
+            {% if ib.attributes %}
+            <dl class="sk-kp-attrs">
+              {% for a in ib.attributes[:6] %}
+              <dt>{{ a.label }}</dt><dd>{{ a.value }}</dd>
+              {% endfor %}
+            </dl>
+            {% endif %}
+
+            {% if ib.urls %}
+            <div class="sk-kp-links">
+              {% for u in ib.urls[:5] %}
+              <a href="{{ u.url }}" target="_blank" rel="noopener noreferrer" class="sk-kp-link">
+                <span class="sk-kp-link-dot"></span>{{ u.title }}
+              </a>
+              {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if ib.engines %}
+            <div class="sk-kp-src">via {{ ib.engines|join(', ') }}</div>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      {% endif %}
+
+      {# Related searches #}
+      {% if suggestions %}
+      <div class="sk-rail-card">
+        <div class="sk-rail-kind">related</div>
+        <div class="sk-related-list">
+          {% for s in suggestions[:8] %}
+          {% set sq = s if s is string else (s.title or s.url or '') %}
+          <form method="{{ method or 'POST' }}" action="{{ url_for('search') }}" style="display:contents">
+            <input type="hidden" name="q" value="{{ sq|e }}">
+            <input type="hidden" name="category_general" value="1">
+            {{ hidden_fields() }}
+            <button type="submit" class="sk-related-btn">
+              <span class="sk-related-arrow">↗</span>
+              <span class="sk-related-txt">{{ sq }}</span>
+            </button>
+          </form>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Quick category jumps #}
+      <div class="sk-rail-card">
+        <div class="sk-rail-kind">explore</div>
+        <div class="sk-explore-list">
+          {% for cat_key, label in [('images','images'),('news','news'),('map','maps'),('videos','videos')] %}
+          <form method="{{ method or 'POST' }}" action="{{ url_for('search') }}" style="display:contents">
+            <input type="hidden" name="q" value="{{ q|e }}">
+            <input type="hidden" name="category_{{ cat_key }}" value="1">
+            {{ hidden_fields() }}
+            <button type="submit" class="sk-explore-btn">{{ label }}</button>
+          </form>
+          {% endfor %}
+        </div>
+      </div>
+    </aside>
+
+    {# ══ IMAGES TAB ══ #}
+    {% elif active_tab == 'images' %}
+    <div class="sk-img-grid" id="skImgGrid">
+      {% for r in results %}
+      {% set thumb = r.thumbnail_src if r.thumbnail_src else (r.img_src if r.img_src else '') %}
+      {% set full = r.img_src if r.img_src else thumb %}
+      {% if thumb %}
+      {# Parse SearXNG's resolution string ("1920×1080" / "1920x1080") so we can set
+         aspect-ratio up-front and avoid layout shift as thumbs load. #}
+      {% set rw = 0 %}{% set rh = 0 %}
+      {% if r.resolution %}
+        {% set _norm = (r.resolution|string)|replace('×','x')|replace('X','x')|replace(' ','') %}
+        {% if 'x' in _norm %}
+          {% set _parts = _norm.split('x') %}
+          {% if _parts|length == 2 %}{% set rw = _parts[0]|int %}{% set rh = _parts[1]|int %}{% endif %}
+        {% endif %}
+      {% endif %}
+      <div class="sk-img-card"
+        style="aspect-ratio:{% if rw > 0 and rh > 0 %}{{ rw }}/{{ rh }}{% else %}4/3{% endif %};"
+        data-thumb="{{ image_proxify(thumb) }}"
+        data-full="{{ image_proxify(full) }}"
+        data-title="{{ r.title|striptags|e }}"
+        data-domain="{{ r.parsed_url.netloc }}"
+        data-url="{{ r.url|e }}"
+        onclick="skImgOpen(this)">
+        <img src="{{ image_proxify(thumb) }}" alt="{{ r.title|striptags|e }}" loading="lazy"
+             {% if rw > 0 and rh > 0 %}width="{{ rw }}" height="{{ rh }}"{% endif %}
+             onerror="var c=this.closest('.sk-img-card'); if(c) c.remove();">
+        <div class="sk-img-cap">{{ r.parsed_url.netloc }}</div>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    <div id="skLightbox" onclick="if(event.target===this)skImgClose()">
+      <button class="sk-lb-close" onclick="skImgClose()">×</button>
+      <button class="sk-lb-nav sk-lb-prev" onclick="skImgNav(-1)">‹</button>
+      <button class="sk-lb-nav sk-lb-next" onclick="skImgNav(1)">›</button>
+      <div class="sk-lb-body">
+        <div class="sk-lb-img-wrap"><img id="skLbImg" src="" alt=""></div>
+        <div class="sk-lb-meta">
+          <div id="skLbTitle"></div>
+          <div id="skLbDomain"></div>
+          <a id="skLbLink" href="#" target="_blank" rel="noopener noreferrer">open source →</a>
+        </div>
+      </div>
+    </div>
+
+    {# ══ NEWS TAB ══ #}
+    {% elif active_tab == 'news' %}
+    <div class="sk-news-grid">
+      {% for r in results %}
+      {% set news_thumb = r.thumbnail or r.img_src %}
+      {# Windows Phone-ish mosaic. Hero (4×2) at index 0; med/small alternation thereafter. #}
+      {% if loop.index0 == 0 %}{% set tile = 'hero' %}
+      {% elif loop.index0 % 4 in [3, 0] %}{% set tile = 'small' %}
+      {% else %}{% set tile = 'med' %}{% endif %}
+      {% if tile == 'small' or not news_thumb %}{% set show_thumb = false %}{% else %}{% set show_thumb = true %}{% endif %}
+      <a href="{{ r.url }}" class="sk-news-card sk-tile-{{ tile }}{% if not show_thumb %} sk-news-card-text{% endif %}" target="_blank" rel="noopener noreferrer">
+        {% if show_thumb %}
+        <div class="sk-news-thumb">
+          {# Bypass image_proxy — Bing 403s the server IP. Browser fetches direct. #}
+          <img src="{{ news_thumb }}" alt="" loading="lazy" referrerpolicy="no-referrer"
+               onerror="var c=this.closest('.sk-news-card'); var t=this.closest('.sk-news-thumb'); if(t) t.remove(); if(c) c.classList.add('sk-news-card-text');">
+        </div>
+        {% endif %}
+        <div class="sk-news-body">
+          <div class="sk-news-src">
+            <img class="sk-favicon" src="https://www.google.com/s2/favicons?domain={{ r.parsed_url.netloc }}&sz=32" alt="" loading="lazy" referrerpolicy="no-referrer"
+                 onerror="this.style.display='none'">
+            <span>{{ r.parsed_url.netloc }}</span>
+          </div>
+          <h3 class="sk-news-title">{{ r.title|striptags }}</h3>
+          {% if r.content and tile != 'small' %}<p class="sk-news-snip">{{ r.content|striptags|truncate(tile == 'hero' and 220 or 180) }}</p>{% endif %}
+          {% if r.publishedDate %}<div class="sk-news-meta"><span class="sk-news-date">{{ r.publishedDate }}</span></div>{% endif %}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+
+    {# ══ VIDEOS TAB ══ #}
+    {% elif active_tab == 'videos' %}
+    <div class="sk-vid-list">
+      {% for r in results %}
+      <a href="{{ r.url }}" class="sk-video-card" target="_blank" rel="noopener noreferrer">
+        <div class="sk-vid-thumb">
+          {% if r.thumbnail %}
+          <img src="{{ r.thumbnail }}" alt="" loading="lazy" referrerpolicy="no-referrer"
+               onerror="this.style.display='none'; var p=this.parentNode.querySelector('.sk-vid-play'); if(p) p.style.display='flex';">
+          <div class="sk-vid-play" style="display:none">▶</div>
+          {% else %}<div class="sk-vid-play">▶</div>{% endif %}
+          {% if r.length %}<div class="sk-vid-length">{{ r.length }}</div>{% endif %}
+        </div>
+        <div class="sk-vid-body">
+          <div class="sk-vid-src">
+            <img class="sk-favicon" src="https://www.google.com/s2/favicons?domain={{ r.parsed_url.netloc }}&sz=32" alt="" loading="lazy" referrerpolicy="no-referrer"
+                 onerror="this.style.display='none'">
+            <span>{{ r.parsed_url.netloc }}</span>
+          </div>
+          <h3 class="sk-vid-title">{{ r.title|striptags }}</h3>
+          {% if r.content %}<p class="sk-vid-snip">{{ r.content|striptags|truncate(140) }}</p>{% endif %}
+          {% if r.publishedDate %}<div class="sk-vid-meta"><span class="sk-vid-date">{{ r.publishedDate }}</span></div>{% endif %}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+
+    {# ══ MAPS TAB ══ #}
+    {% elif active_tab == 'maps' %}
+    <div class="sk-maps-app" id="skMapsApp">
+      {# Places list panel #}
+      <div class="sk-places-panel">
+        <div class="sk-places-hd">
+          <div class="sk-places-search-outer">
+            <div class="sk-places-search-wrap">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;color:var(--text-dim)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input id="sk-map-q" type="text" value="{{ q|e }}" class="sk-places-input" placeholder="search places..." autocomplete="off">
+              <button id="sk-map-locate" class="sk-map-locate" type="button" title="use my location" aria-label="use my location">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/>
+                </svg>
+              </button>
+            </div>
+            <div id="sk-map-ac" class="sk-map-ac"></div>
+          </div>
+          <div id="sk-map-status" class="sk-places-status">searching…</div>
+          <div id="sk-map-near" class="sk-map-near" style="display:none">
+            <span class="sk-near-dot"></span><span id="sk-map-near-txt">near you</span>
+            <button id="sk-map-near-clear" type="button" aria-label="clear location">✕</button>
+          </div>
+        </div>
+        <div class="sk-places-list" id="sk-places-list">
+          <div class="sk-map-loader">
+            <span class="sk-map-loader-dot"></span>
+            <span class="sk-map-loader-dot"></span>
+            <span class="sk-map-loader-dot"></span>
+          </div>
+        </div>
+      </div>
+
+      {# Map panel #}
+      <div class="sk-map-panel" id="skMapPanel">
+        <div id="sk-leaflet-map"></div>
+        <div id="sk-place-detail" class="sk-place-detail" style="display:none"></div>
+        <div id="sk-map-empty" class="sk-map-empty" style="display:none">
+          <p style="font-family:'Inter',sans-serif;font-style:italic;font-size:18px;color:var(--text-dim)">no places found</p>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>{# /sk-content #}
+</div>{# /sk-app #}
+
+{# Bottom bar #}
+<div class="sk-bottom">
+  <button type="button" class="sk-pref sk-pref-btn" onclick="openHorizonSettings()">horizon</button>
+  <span class="sk-pref-dot">·</span>
+  <a href="{{ url_for('preferences') }}" class="sk-pref">engines</a>
+</div>
+
+{# AI side panel — opt-in, only wired up when enabled in settings #}
+<aside class="sk-ai-panel" id="skAiPanel" aria-hidden="true">
+  <div class="sk-ai-head">
+    <div class="sk-ai-title"><span class="sk-ai-dot"></span> AI</div>
+    <div class="sk-ai-head-actions">
+      <button class="sk-ai-head-btn" type="button" onclick="toggleAiOptions()" aria-label="options" title="options">⚙</button>
+      <button class="sk-ai-close" type="button" onclick="closeAiPanel()" aria-label="close">✕</button>
+    </div>
+  </div>
+  <div class="sk-ai-options" id="skAiOptions" style="display:none">
+    <div class="sk-ai-opt-row">
+      <label class="sk-ai-opt-label" for="skAiTemp">Temperature <span id="skAiTempVal">0.7</span></label>
+      <input type="range" id="skAiTemp" min="0" max="2" step="0.1" value="0.7">
+    </div>
+    <label class="sk-ai-opt-toggle">
+      <input type="checkbox" id="skAiThink">
+      <span>Think deeply <span class="sk-ai-opt-note">(reasoning models only)</span></span>
+    </label>
+  </div>
+  <div class="sk-ai-body" id="skAiBody">
+    <div class="sk-ai-empty">Ask anything about the results on this page. Citations link back to the matching card.</div>
+  </div>
+  <div class="sk-ai-foot">
+    <div class="sk-ai-chips">
+      <button type="button" class="sk-ai-chip" data-prompt="Summarize these results in 3-5 sentences.">Summarize</button>
+      <button type="button" class="sk-ai-chip" data-prompt="What's the consensus across these results? Where do they disagree?">Consensus</button>
+      <button type="button" class="sk-ai-chip" data-prompt="Which result best answers my query, and why?">Best answer</button>
+    </div>
+    <form class="sk-ai-form" id="skAiForm">
+      <textarea class="sk-ai-input" id="skAiInput" placeholder="ask about these results…" rows="1" autocomplete="off"></textarea>
+      <button type="submit" class="sk-ai-send" id="skAiSend" aria-label="send">→</button>
+    </form>
+  </div>
+</aside>
+
+<style>
+html, body { height:100%; overflow:hidden; }
+.sk-app { height:100vh; display:flex; flex-direction:column; }
+
+/* Header */
+.sk-header { padding:28px 56px 0; flex-shrink:0; }
+.sk-search-row { display:flex; align-items:center; gap:16px; border-bottom:1px solid var(--border); padding-bottom:12px; }
+/* .sk-logo style lives in base.html — do not redeclare here (would shadow Pacifico). */
+.sk-divider { width:1px; height:18px; background:var(--border); flex-shrink:0; }
+.sk-input-wrap { flex:1; position:relative; min-width:0; }
+.sk-input-wrap form { display:flex; align-items:center; }
+.sk-input { flex:1; min-width:0; background:none; border:none; color:var(--text); font-family:inherit; font-size:19px; font-weight:400; letter-spacing:-0.3px; outline:none; caret-color:var(--accent); padding-left:12px; }
+.sk-input::placeholder { color:var(--text-dim); }
+.sk-meta { font-size:11px; color:var(--text-dim); white-space:nowrap; flex-shrink:0; }
+.sk-meta em { font-style:normal; color:var(--text-mid); }
+
+/* Tabs */
+.sk-tabs { display:flex; padding-top:10px; overflow-x:auto; border-bottom:1px solid var(--border); scrollbar-width:none; }
+.sk-tabs::-webkit-scrollbar { display:none; }
+.sk-tab { padding:8px 16px; background:none; border:none; border-bottom:2px solid transparent; color:var(--text-dim); font-size:12px; font-weight:500; letter-spacing:0.3px; cursor:pointer; font-family:inherit; transition:all 0.2s; white-space:nowrap; margin-bottom:-1px; }
+.sk-tab:hover { color:var(--text-mid); }
+.sk-tab.sk-tab-on { color:var(--text); border-bottom-color:var(--accent); }
+
+/* Cat pills */
+.sk-cats { display:flex; gap:6px; padding-top:10px; flex-wrap:wrap; }
+.sk-cat { padding:5px 12px; border-radius:3px; font-size:11px; font-weight:500; letter-spacing:0.3px; cursor:pointer; border:1px solid transparent; background:none; color:var(--text-dim); font-family:inherit; transition:all 0.2s; display:inline-flex; align-items:center; gap:5px; }
+.sk-cat:hover { color:var(--text-mid); }
+.sk-cat.sk-cat-on { color:var(--text); border-color:var(--border); }
+.sk-dot { width:5px; height:5px; border-radius:50%; flex-shrink:0; }
+
+/* Content — default single column flex for images/news/videos/maps */
+.sk-content { flex:1; overflow-y:auto; padding:22px 56px 100px; display:flex; gap:28px; }
+/* All-tab: main column + persistent right rail */
+.sk-content-all {
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap:48px;
+  align-items:start;
+}
+.sk-main-col { min-width:0; max-width:980px; }
+
+/* Favicon (shared) */
+.sk-favicon { width:14px; height:14px; border-radius:3px; flex-shrink:0; display:inline-block; vertical-align:middle; }
+
+/* Featured (top result) — elevated card */
+.sk-feat-link { text-decoration:none; display:block; margin-bottom:14px; }
+.sk-featured {
+  position:relative;
+  background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:18px 22px 22px;
+  transition: border-color 0.2s, transform 0.2s, background 0.2s;
+  animation:seek-fade-up 0.5s ease both;
+}
+.sk-feat-link:hover .sk-featured { border-color:var(--border-hover); transform:translateY(-2px); }
+.sk-feat-link:hover .sk-feat-title { color:var(--accent); }
+.sk-feat-badge { display:inline-flex; align-items:center; gap:6px; font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; color:var(--accent-warm); margin-bottom:10px; }
+.sk-feat-dot { width:5px; height:5px; border-radius:50%; background:var(--accent-warm); box-shadow:0 0 8px var(--accent-warm); }
+.sk-feat-body { display:flex; gap:18px; align-items:flex-start; }
+.sk-feat-main { flex:1; min-width:0; }
+.sk-feat-src { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--text-mid); margin-bottom:6px; letter-spacing:0.2px; }
+.sk-feat-src span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sk-feat-title { font-family:'Inter',sans-serif; font-size:24px; font-weight:600; line-height:1.3; margin-bottom:8px; color:var(--text); transition:color 0.25s; letter-spacing:-0.3px; }
+.sk-feat-snip { font-size:14px; color:var(--text-mid); line-height:1.65; }
+.sk-feat-thumb { width:140px; aspect-ratio:1/1; flex-shrink:0; border-radius:10px; overflow:hidden; background:#0a0a0a; border:1px solid var(--border); align-self:flex-start; }
+.sk-feat-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+
+/* Results list — Windows Phone-style tile mosaic (mirrors news grid).
+   Within each tile, snippet (or title for small/text-only) grows via flex
+   so cards don't have internal deadspace. */
+.sk-results-list {
+  display:grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: 140px;
+  grid-auto-flow: dense;
+  gap:10px;
+  min-width:0;
+}
+.sk-result-link { text-decoration:none; display:flex; min-width:0; }
+.sk-result {
+  flex:1;
+  display:flex; gap:14px; align-items:stretch;
+  background: var(--surface-1);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:12px 14px;
+  animation:seek-fade-up 0.4s ease both;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+  min-width:0; overflow:hidden;
+}
+.sk-result-link:hover .sk-result { border-color:var(--border-hover); background:var(--surface-2); transform:translateY(-2px); }
+.sk-result-link:hover .sk-result-title { color:var(--accent); }
+.sk-result-body { flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; }
+.sk-result-src { display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--text-mid); letter-spacing:0.2px; flex-shrink:0; }
+.sk-result-src span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sk-result-title { font-family:'Inter',sans-serif; font-size:15px; font-weight:600; line-height:1.32; color:var(--text); transition:color 0.2s; letter-spacing:-0.15px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin-top:5px; }
+.sk-result-snip { font-size:12.5px; color:var(--text-mid); line-height:1.5; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; flex:1; margin-top:5px; }
+.sk-result-thumb { width:90px; flex-shrink:0; border-radius:8px; overflow:hidden; background:#0a0a0a; border:1px solid var(--border); align-self:stretch; }
+.sk-result-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+
+/* Result tile sizes */
+.sk-res-tile-small { grid-column: span 1; grid-row: span 1; }
+.sk-res-tile-med   { grid-column: span 2; grid-row: span 1; }
+
+/* Small tile — text only, title fills the card */
+.sk-res-tile-small .sk-result-title { font-size:13.5px; -webkit-line-clamp:4; flex:1; }
+.sk-res-tile-small .sk-result-snip { display:none; }
+.sk-result-text .sk-result-thumb { display:none; }
+.sk-result-text .sk-result-title { flex:1; -webkit-line-clamp:4; }
+
+/* ─── Right rail ─── */
+.sk-rail { position:sticky; top:0; align-self:start; display:flex; flex-direction:column; gap:18px; min-width:0; animation:seek-fade-in 0.6s ease 0.25s both; }
+
+/* Knowledge panel */
+.sk-kp {
+  background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
+  border:1px solid var(--border);
+  border-radius:14px;
+  overflow:hidden;
+}
+.sk-kp-hero {
+  width:100%; height:180px;
+  background-size:cover; background-position:center;
+  border-bottom:1px solid var(--border);
+  position:relative;
+}
+.sk-kp-hero::after {
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.55) 100%);
+  pointer-events:none;
+}
+.sk-kp-body { padding:18px 18px 20px; }
+.sk-kp-kind { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:1.6px; color:var(--accent-warm); margin-bottom:8px; }
+.sk-kp-title-link { text-decoration:none; }
+.sk-kp-title { font-family:'Inter',sans-serif; font-size:22px; font-weight:500; line-height:1.25; color:var(--text); margin-bottom:8px; letter-spacing:-0.3px; transition:color 0.2s; }
+.sk-kp-title-link:hover .sk-kp-title { color:var(--accent); }
+.sk-kp-content { font-size:13px; color:var(--text-mid); line-height:1.65; margin-bottom:14px; }
+.sk-kp-attrs { display:grid; grid-template-columns: auto 1fr; gap:6px 14px; margin-bottom:14px; font-size:12px; }
+.sk-kp-attrs dt { color:var(--text-dim); text-transform:lowercase; letter-spacing:0.2px; white-space:nowrap; }
+.sk-kp-attrs dd { color:var(--text); }
+.sk-kp-links { display:flex; flex-direction:column; gap:2px; margin-bottom:10px; padding-top:10px; border-top:1px solid var(--border); }
+.sk-kp-link { display:flex; align-items:center; gap:9px; padding:6px 0; font-size:12.5px; color:var(--text-mid); text-decoration:none; transition:color 0.15s, transform 0.15s; }
+.sk-kp-link:hover { color:var(--accent); transform:translateX(2px); }
+.sk-kp-link-dot { width:4px; height:4px; border-radius:50%; background:var(--accent); flex-shrink:0; opacity:0.65; }
+.sk-kp-src { font-size:10px; color:var(--text-dim); letter-spacing:0.3px; padding-top:6px; border-top:1px solid var(--border); }
+
+/* Generic rail card */
+.sk-rail-card {
+  background:var(--surface-1);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:14px 16px 16px;
+}
+.sk-rail-kind { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:1.6px; color:var(--text-dim); margin-bottom:10px; }
+.sk-related-list { display:flex; flex-direction:column; }
+.sk-related-btn { display:flex; align-items:center; gap:10px; padding:8px 0; border:none; border-bottom:1px solid rgba(255,255,255,0.04); background:none; cursor:pointer; font-family:inherit; width:100%; text-align:left; color:inherit; transition:all 0.18s; }
+.sk-related-btn:last-child { border-bottom:none; }
+.sk-related-btn:hover { padding-left:6px; }
+.sk-related-btn:hover .sk-related-txt { color:var(--text); }
+.sk-related-btn:hover .sk-related-arrow { color:var(--accent); }
+.sk-related-arrow { font-size:13px; color:var(--text-dim); transition:color 0.18s; flex-shrink:0; line-height:1; }
+.sk-related-txt { font-size:13px; color:var(--text-mid); transition:color 0.18s; line-height:1.3; }
+.sk-explore-list { display:flex; flex-wrap:wrap; gap:6px; }
+.sk-explore-btn { padding:6px 12px; border:1px solid var(--border); border-radius:18px; background:none; color:var(--text-mid); font-size:11.5px; cursor:pointer; font-family:inherit; transition:all 0.18s; letter-spacing:0.2px; }
+.sk-explore-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+/* Images — natural-aspect masonry. Drop flex layout on the parent for this tab
+   so the column flow grows vertically and the page scrolls down, not sideways. */
+.sk-content-images { display: block !important; }
+.sk-img-grid {
+  columns: 240px;
+  column-gap: 6px;
+}
+.sk-img-card {
+  display: block;
+  break-inside: avoid;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  cursor: pointer;
+  background: #0a0a0a;
+  border: 1px solid var(--border);
+  transition: border-color 0.18s, transform 0.18s, box-shadow 0.18s;
+}
+.sk-img-card:hover {
+  border-color: rgba(255,114,0,0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+}
+.sk-img-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: opacity 0.18s;
+}
+.sk-img-cap {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  padding: 22px 10px 8px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.78));
+  font-size: 10.5px;
+  color: rgba(255,255,255,0.78);
+  letter-spacing: 0.2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+  transition: color 0.18s;
+}
+.sk-img-card:hover .sk-img-cap { color: #fff; }
+/* Lightbox */
+#skLightbox { display:none; position:fixed; inset:0; z-index:9000; background:rgba(0,0,0,0.9); align-items:center; justify-content:center; }
+.sk-lb-close { position:absolute; top:18px; right:22px; background:none; border:none; color:var(--text-dim); font-size:30px; line-height:1; cursor:pointer; padding:4px 8px; transition:color 0.15s; }
+.sk-lb-close:hover { color:var(--text); }
+.sk-lb-nav { position:absolute; top:50%; transform:translateY(-50%); background:rgba(255,255,255,0.06); border:1px solid var(--border); border-radius:50%; width:44px; height:44px; color:var(--text); font-size:22px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.15s, opacity 0.15s; user-select:none; }
+.sk-lb-nav:hover { background:rgba(255,255,255,0.1); }
+.sk-lb-prev { left:20px; }
+.sk-lb-next { right:20px; }
+.sk-lb-body { max-width:min(920px,88vw); width:100%; display:flex; flex-direction:column; align-items:center; gap:14px; }
+.sk-lb-img-wrap { width:100%; display:flex; align-items:center; justify-content:center; max-height:72vh; }
+#skLbImg { max-height:72vh; max-width:100%; object-fit:contain; border-radius:5px; background:#111; }
+.sk-lb-meta { width:100%; display:flex; align-items:center; gap:14px; padding:0 2px; }
+#skLbTitle { flex:1; font-size:14px; font-weight:500; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+#skLbDomain { font-size:12px; color:var(--text-dim); white-space:nowrap; flex-shrink:0; }
+#skLbLink { font-size:13px; color:var(--accent); text-decoration:none; white-space:nowrap; flex-shrink:0; }
+#skLbLink:hover { text-decoration:underline; }
+
+/* Lists (videos, maps) */
+.sk-list-col { flex:1; max-width:640px; }
+.sk-sec-label { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; color:var(--text-dim); margin-bottom:8px; padding-top:4px; }
+
+/* News — Windows Phone-style live-tile mosaic.
+   4-track grid + grid-auto-flow:dense lets mixed-size tiles pack tightly.
+   Inside each tile, content uses flex with margin-top:auto on meta to push
+   the date to the bottom; the snippet (or title in small tiles) grows to
+   fill the tile so there's no internal deadspace. */
+.sk-news-grid {
+  flex:1;
+  display:grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: 120px;
+  grid-auto-flow: dense;
+  gap:10px;
+  align-content: start;
+  min-width:0;
+}
+.sk-news-card {
+  display:flex;
+  background: var(--surface-1);
+  border:1px solid var(--border);
+  border-radius:12px;
+  overflow:hidden;
+  text-decoration:none; color:inherit;
+  transition: transform 0.2s, border-color 0.2s, background 0.2s;
+  animation: seek-fade-up 0.4s ease both;
+  min-width:0;
+}
+.sk-news-card:hover { border-color: var(--border-hover); background: var(--surface-2); transform: translateY(-2px); }
+.sk-news-card:hover .sk-news-title { color: var(--accent); }
+.sk-news-thumb { flex-shrink:0; background:#0a0a0a; overflow:hidden; position:relative; }
+.sk-news-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.sk-news-body {
+  flex:1; min-width:0;
+  padding:11px 14px 12px;
+  display:flex; flex-direction:column;
+  overflow:hidden;
+}
+.sk-news-src { display:flex; align-items:center; gap:7px; font-size:11px; color:var(--text-mid); letter-spacing:0.2px; flex-shrink:0; }
+.sk-news-src span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sk-news-title { font-family:'Inter',sans-serif; font-size:14px; font-weight:600; line-height:1.32; color:var(--text); transition:color 0.2s; letter-spacing:-0.15px; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; margin-top:4px; }
+.sk-news-snip { font-size:12px; color:var(--text-mid); line-height:1.5; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; flex:1; margin-top:4px; }
+.sk-news-meta { font-size:10.5px; color:var(--text-dim); flex-shrink:0; margin-top:auto; padding-top:6px; }
+.sk-news-date { font-variant-numeric: tabular-nums; }
+/* Text-only news cards (no thumb) let the title fill the card. */
+.sk-news-card-text .sk-news-title { flex:1; -webkit-line-clamp:5; margin-top:6px; }
+
+/* ── Tile sizes ──
+   small  : 1×1 (text only, ¼ row) — fills deadspace
+   med    : 2×1 (image left + text right, ½ row)
+   hero   : 4×2 (full-width banner) */
+.sk-tile-small { grid-column: span 1; grid-row: span 1; }
+.sk-tile-med   { grid-column: span 2; grid-row: span 1; }
+.sk-tile-hero  { grid-column: span 3; grid-row: span 2; background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%); }
+
+/* Small tile — text-only compact widget. Title fills the tile. */
+.sk-tile-small { flex-direction:column; }
+.sk-tile-small .sk-news-body { padding:11px 14px; }
+.sk-tile-small .sk-news-title { font-size:13.5px; flex:1; -webkit-line-clamp:5; margin-top:6px; }
+.sk-tile-small .sk-news-snip { display:none; }
+
+/* Medium tile — horizontal layout, thumb left ~40%, snippet fills remaining height */
+.sk-tile-med .sk-news-thumb { width:38%; max-width:150px; }
+.sk-tile-med.sk-news-card-text .sk-news-body { padding:12px 16px; }
+
+/* Hero tile — image left ~40%, text right, tighter type, snippet fills */
+.sk-tile-hero .sk-news-thumb { width:40%; }
+.sk-tile-hero .sk-news-body { padding:16px 20px; }
+.sk-tile-hero .sk-news-src { font-size:11.5px; }
+.sk-tile-hero .sk-news-title { font-size:17px; font-weight:600; letter-spacing:-0.25px; line-height:1.32; -webkit-line-clamp:3; margin-top:5px; }
+.sk-tile-hero .sk-news-snip { font-size:12.5px; line-height:1.55; -webkit-line-clamp:5; margin-top:6px; }
+.sk-tile-hero.sk-news-card-text .sk-news-body { padding:18px 22px; }
+.sk-tile-hero.sk-news-card-text .sk-news-title { -webkit-line-clamp:7; font-size:19px; }
+/* Videos — horizontal cards matching results aesthetic */
+.sk-vid-list { display:grid; grid-template-columns: repeat(2, 1fr); gap:12px; align-content:start; }
+.sk-video-card {
+  display:flex; gap:14px;
+  background: var(--surface-1);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:12px;
+  text-decoration:none; color:inherit;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+  animation: seek-fade-up 0.4s ease both;
+  min-width:0;
+}
+.sk-video-card:hover { border-color:var(--border-hover); background:var(--surface-2); transform:translateY(-2px); }
+.sk-video-card:hover .sk-vid-title { color:var(--accent); }
+.sk-vid-thumb { width:160px; aspect-ratio:16/9; flex-shrink:0; border-radius:8px; overflow:hidden; border:1px solid var(--border); background:#0a0a0a; display:flex; align-items:center; justify-content:center; position:relative; }
+.sk-vid-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.sk-vid-play { font-size:22px; color:var(--text-dim); }
+.sk-vid-length { position:absolute; right:6px; bottom:6px; padding:2px 6px; font-size:10px; font-weight:500; color:#fff; background:rgba(0,0,0,0.72); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); border-radius:4px; letter-spacing:0.2px; }
+.sk-vid-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
+.sk-vid-src { display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--text-mid); letter-spacing:0.2px; }
+.sk-vid-src span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sk-vid-title { font-family:'Inter',sans-serif; font-size:15.5px; font-weight:600; line-height:1.32; color:var(--text); transition:color 0.2s; letter-spacing:-0.15px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.sk-vid-snip { font-size:12.5px; color:var(--text-mid); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.sk-vid-meta { font-size:10.5px; color:var(--text-dim); margin-top:auto; padding-top:2px; }
+.sk-vid-date { font-variant-numeric: tabular-nums; }
+
+/* Misc */
+.sk-answer { padding:18px 0; border-bottom:1px solid var(--border); }
+.sk-answer-text { font-family:'Inter',sans-serif; font-size:22px; line-height:1.5; color:var(--text); }
+.sk-noresults { padding:40px 0; }
+.sk-tag { padding:5px 12px; border:1px solid var(--border); border-radius:3px; background:none; color:var(--text-dim); font-size:11px; cursor:pointer; font-family:inherit; transition:all 0.2s; }
+.sk-tag:hover { border-color:var(--accent); color:var(--accent); }
+.sk-pages { display:flex; gap:8px; padding:24px 0; }
+.sk-pgbtn { padding:6px 16px; border:1px solid var(--border); border-radius:3px; background:none; color:var(--text-mid); font-size:12px; cursor:pointer; font-family:inherit; transition:all 0.2s; }
+.sk-pgbtn:hover { border-color:var(--accent); color:var(--accent); }
+.sk-bottom { position:fixed; bottom:0; left:0; right:0; display:flex; justify-content:flex-end; align-items:center; gap:10px; padding:14px 56px; background:linear-gradient(transparent,var(--bg) 40%); pointer-events:none; z-index:50; }
+.sk-pref { font-family:'Inter',sans-serif; font-style:italic; font-size:12px; color:var(--text-dim); text-decoration:none; pointer-events:all; transition:color 0.2s; background:none; border:none; padding:0; cursor:pointer; }
+.sk-pref:hover { color:var(--accent); }
+.sk-pref-btn { font:inherit; font-style:italic; font-size:12px; }
+.sk-pref-dot { color:var(--text-dim); font-size:12px; pointer-events:none; }
+
+/* AI panel pill in the header — grey when panel closed, orange when open.
+   Always visible on results pages; clicking it when unconfigured opens settings. */
+.sk-ai-pill {
+  display: inline-flex;
+  align-items: center; gap: 7px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 5px 12px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-family: inherit; font-size: 11.5px; font-weight: 500;
+  letter-spacing: 0.4px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.sk-ai-pill:hover { border-color: var(--border-hover); color: var(--text); }
+.sk-ai-pill-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-dim);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.sk-ai-pill.on {
+  background: rgba(255,114,0,0.14);
+  border-color: rgba(255,114,0,0.5);
+  color: var(--accent);
+}
+.sk-ai-pill.on:hover { background: rgba(255,114,0,0.22); border-color: rgba(255,114,0,0.7); }
+.sk-ai-pill.on .sk-ai-pill-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+
+/* AI side panel */
+.sk-ai-panel { position:fixed; top:0; right:0; bottom:0; width:380px; background:var(--surface-1); border-left:1px solid var(--border); z-index:200; display:flex; flex-direction:column; transform:translateX(100%); transition:transform 0.28s cubic-bezier(0.4,0,0.2,1); box-shadow:-12px 0 32px rgba(0,0,0,0.4); }
+.sk-ai-panel.open { transform:translateX(0); }
+.sk-ai-head { display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--border); flex-shrink:0; }
+.sk-ai-head-actions { display:flex; align-items:center; gap:4px; }
+.sk-ai-head-btn { background:none; border:none; color:var(--text-dim); font-size:14px; cursor:pointer; padding:4px 8px; border-radius:4px; transition:color 0.15s, background 0.15s; line-height:1; }
+.sk-ai-head-btn:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+.sk-ai-title { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text); font-weight:500; letter-spacing:0.4px; text-transform:uppercase; }
+.sk-ai-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); animation:ai-pulse 2.4s ease-in-out infinite; }
+@keyframes ai-pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+.sk-ai-close { background:none; border:none; color:var(--text-dim); font-size:16px; cursor:pointer; padding:4px 8px; border-radius:4px; line-height:1; transition:color 0.15s, background 0.15s; }
+.sk-ai-close:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+
+/* Panel options popover */
+.sk-ai-options {
+  border-bottom:1px solid var(--border);
+  padding:12px 18px 14px;
+  display:flex; flex-direction:column; gap:10px;
+  background:var(--surface-2);
+  flex-shrink:0;
+}
+.sk-ai-opt-row { display:flex; flex-direction:column; gap:5px; }
+.sk-ai-opt-label { font-size:10.5px; color:var(--text-mid); letter-spacing:0.4px; text-transform:uppercase; display:flex; justify-content:space-between; align-items:center; }
+.sk-ai-opt-label span { color:var(--accent); font-variant-numeric:tabular-nums; text-transform:none; letter-spacing:0; font-weight:500; }
+.sk-ai-opt-row input[type="range"] { accent-color:var(--accent); width:100%; height:4px; }
+.sk-ai-opt-toggle { display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; color:var(--text); user-select:none; }
+.sk-ai-opt-toggle input { accent-color:var(--accent); width:14px; height:14px; cursor:pointer; }
+.sk-ai-opt-note { color:var(--text-dim); font-size:10.5px; margin-left:4px; }
+
+/* Tool-call (search) indicator inside the chat */
+.sk-ai-tool { font-size:11.5px; color:var(--text-mid); padding:6px 0 4px; display:flex; align-items:center; gap:7px; line-height:1.4; }
+.sk-ai-tool-icon { color:var(--accent); font-size:13px; line-height:1; }
+.sk-ai-tool em { color:var(--text); font-style:normal; font-weight:500; }
+.sk-ai-tool.err .sk-ai-tool-icon { color:#ff8b8b; }
+
+/* Tool result list (numbered, clickable) */
+.sk-ai-tool-results {
+  border-left:1px solid rgba(255,114,0,0.22);
+  padding:4px 0 4px 12px;
+  margin:-2px 0 8px;
+  display:flex; flex-direction:column; gap:1px;
+}
+.sk-ai-tool-results-head { font-size:10.5px; color:var(--text-dim); letter-spacing:0.3px; padding:2px 6px 4px; }
+.sk-ai-tool-results-head em { font-style:normal; color:var(--text); font-weight:500; }
+.sk-ai-tool-result { display:flex; gap:8px; padding:5px 6px; border-radius:5px; text-decoration:none; color:inherit; font-size:11.5px; line-height:1.4; transition:background 0.15s; align-items:baseline; }
+.sk-ai-tool-result:hover { background:rgba(255,114,0,0.06); }
+.sk-ai-tool-idx { color:var(--accent); font-weight:500; flex-shrink:0; font-variant-numeric:tabular-nums; min-width:24px; }
+.sk-ai-tool-title { color:var(--text); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sk-ai-tool-src { color:var(--text-dim); flex-shrink:0; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* Markdown styling inside the AI assistant bubble */
+.sk-ai-msg-ai { white-space:normal; }
+.sk-ai-msg-ai p { margin:0 0 8px; line-height:1.6; }
+.sk-ai-msg-ai p:last-child { margin-bottom:0; }
+.sk-ai-msg-ai ul, .sk-ai-msg-ai ol { margin:4px 0 10px; padding-left:22px; }
+.sk-ai-msg-ai li { margin-bottom:4px; line-height:1.55; }
+.sk-ai-msg-ai strong { color:var(--text); font-weight:600; }
+.sk-ai-msg-ai em { color:var(--text); font-style:italic; }
+.sk-ai-msg-ai code { background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px; font-size:11.5px; color:var(--text); font-family:inherit; }
+.sk-ai-msg-ai a { color:var(--accent); text-decoration:none; }
+.sk-ai-msg-ai a:hover { text-decoration:underline; }
+.sk-ai-msg-ai .sk-ai-h { font-family:'Inter',sans-serif; color:var(--text); margin:10px 0 6px; }
+.sk-ai-msg-ai h3.sk-ai-h { font-size:13.5px; font-weight:600; }
+.sk-ai-msg-ai h4.sk-ai-h { font-size:12px; font-weight:600; letter-spacing:0.4px; color:var(--text-mid); text-transform:uppercase; }
+.sk-ai-body { flex:1; overflow-y:auto; padding:18px 18px 8px; display:flex; flex-direction:column; gap:14px; }
+.sk-ai-empty { color:var(--text-dim); font-size:12.5px; font-style:italic; padding:6px 0; line-height:1.6; }
+.sk-ai-msg { font-size:13.5px; line-height:1.7; }
+.sk-ai-msg-user { color:var(--text); padding:9px 12px; background:rgba(255,114,0,0.06); border-radius:8px; border:1px solid rgba(255,114,0,0.18); align-self:flex-start; max-width:100%; font-size:13px; }
+.sk-ai-msg-ai { color:var(--text-mid); white-space:pre-wrap; }
+.sk-ai-msg-ai .sk-ai-cite { display:inline-block; background:rgba(255,114,0,0.1); color:var(--accent); border:1px solid rgba(255,114,0,0.25); border-radius:10px; padding:0 6px; font-size:11px; font-weight:500; cursor:pointer; margin:0 2px; transition:background 0.15s; vertical-align:1px; }
+.sk-ai-msg-ai .sk-ai-cite:hover { background:rgba(255,114,0,0.22); }
+.sk-ai-msg-err { color:#ff8b8b; font-size:12.5px; background:rgba(255,80,80,0.06); border:1px solid rgba(255,80,80,0.2); padding:9px 12px; border-radius:8px; }
+.sk-ai-thinking { color:var(--text-dim); font-size:12px; font-style:italic; padding:4px 0; }
+.sk-ai-ctx { color:var(--text-dim); font-size:10.5px; letter-spacing:0.3px; padding:2px 0 4px; }
+.sk-ai-foot { border-top:1px solid var(--border); padding:12px 14px; flex-shrink:0; background:var(--surface-1); }
+.sk-ai-chips { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+.sk-ai-chip { background:rgba(255,255,255,0.03); border:1px solid var(--border); color:var(--text-mid); font-family:inherit; font-size:11.5px; padding:5px 11px; border-radius:14px; cursor:pointer; transition:all 0.15s; }
+.sk-ai-chip:hover { border-color:var(--accent); color:var(--accent); }
+.sk-ai-form { display:flex; gap:8px; align-items:flex-end; }
+.sk-ai-input { flex:1; background:#0f0f10; border:1px solid var(--border); border-radius:8px; padding:9px 12px; color:var(--text); font-family:inherit; font-size:13px; resize:none; outline:none; max-height:120px; line-height:1.5; }
+.sk-ai-input:focus { border-color:var(--accent); }
+.sk-ai-send { background:var(--accent); color:#fff; border:none; border-radius:8px; width:38px; height:38px; cursor:pointer; font-size:18px; line-height:1; flex-shrink:0; transition:opacity 0.15s; }
+.sk-ai-send:hover { opacity:0.88; }
+.sk-ai-send:disabled { opacity:0.35; cursor:not-allowed; }
+
+/* Flash highlight when scrolled to via citation */
+@keyframes sk-flash-kf { 0% { box-shadow:0 0 0 3px rgba(255,114,0,0.6); } 100% { box-shadow:0 0 0 3px rgba(255,114,0,0); } }
+.sk-flash { animation:sk-flash-kf 1.4s ease-out; }
+
+@media (max-width: 768px) {
+  .sk-ai-panel { width:100vw; }
+}
+
+/* ── Maps ── */
+.sk-maps-app { flex:1; display:flex; height:100%; overflow:hidden; }
+.sk-places-panel { width:340px; flex-shrink:0; display:flex; flex-direction:column; border-right:1px solid var(--border); overflow:hidden; }
+.sk-places-hd { padding:16px 20px 12px; border-bottom:1px solid var(--border); flex-shrink:0; }
+.sk-places-search-wrap { display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:10px; padding:9px 10px 9px 14px; transition:border-color 0.2s; margin-bottom:8px; }
+.sk-places-search-wrap:focus-within { border-color:var(--border-hover); }
+.sk-places-input { flex:1; background:none; border:none; outline:none; font-family:inherit; font-size:14px; color:var(--text); caret-color:var(--accent); min-width:0; }
+.sk-places-input::placeholder { color:var(--text-dim); }
+.sk-map-locate { background:none; border:none; padding:6px; border-radius:6px; color:var(--text-dim); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.15s; flex-shrink:0; font-family:inherit; }
+.sk-map-locate:hover { background:rgba(255,255,255,0.04); color:var(--accent); }
+.sk-map-locate.sk-locate-active { color:var(--accent); }
+.sk-map-locate.sk-locate-loading svg { animation: sk-spin 0.8s linear infinite; }
+@keyframes sk-spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+.sk-places-status { font-size:10px; color:var(--text-dim); letter-spacing:0.3px; }
+.sk-map-near { display:inline-flex; align-items:center; gap:6px; margin-top:6px; padding:4px 10px 4px 8px; background:rgba(255,114,0,0.08); border:1px solid rgba(255,114,0,0.18); border-radius:99px; font-size:10.5px; color:var(--accent-warm); letter-spacing:0.2px; }
+.sk-near-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); box-shadow: 0 0 0 0 rgba(255,114,0,0.5); animation: sk-pulse-near 1.8s ease-out infinite; }
+@keyframes sk-pulse-near { 0% { box-shadow: 0 0 0 0 rgba(255,114,0,0.55); } 75% { box-shadow: 0 0 0 6px rgba(255,114,0,0); } 100% { box-shadow: 0 0 0 0 rgba(255,114,0,0); } }
+/* "You are here" marker — a blue dot with a soft expanding pulse halo. */
+.sk-you-here { position:relative; width:22px; height:22px; }
+.sk-you-here .sk-you-dot { position:absolute; top:50%; left:50%; width:14px; height:14px; margin:-7px 0 0 -7px; border-radius:50%; background:#4aa6ff; border:2.5px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.5); }
+.sk-you-here .sk-you-pulse { position:absolute; top:50%; left:50%; width:22px; height:22px; margin:-11px 0 0 -11px; border-radius:50%; background:rgba(74,166,255,0.35); animation: sk-you-pulse-kf 2.2s ease-out infinite; }
+@keyframes sk-you-pulse-kf { 0% { transform:scale(0.6); opacity:0.7; } 100% { transform:scale(2.4); opacity:0; } }
+#sk-map-near-clear { background:none; border:none; color:var(--accent-warm); cursor:pointer; padding:0 0 0 4px; font-size:11px; font-family:inherit; opacity:0.7; transition:opacity 0.15s; }
+#sk-map-near-clear:hover { opacity:1; }
+.sk-places-list { flex:1; overflow-y:auto; padding:12px 14px 18px; display:flex; flex-direction:column; gap:8px; }
+.sk-place-item {
+  height:108px; flex-shrink:0;
+  background: var(--surface-1);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px 14px;
+  cursor:pointer;
+  transition: border-color 0.18s, background 0.18s, transform 0.18s;
+  overflow:hidden;
+  display:flex; flex-direction:column;
+  position:relative;
+}
+.sk-place-item:hover { border-color:var(--border-hover); background:var(--surface-2); transform:translateY(-1px); }
+.sk-place-item.sk-place-active { border-color:var(--accent); background:rgba(255,114,0,0.06); box-shadow:0 0 0 1px rgba(255,114,0,0.25), 0 4px 14px rgba(255,114,0,0.08); }
+.sk-place-type { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:1.2px; color:var(--accent); margin-bottom:4px; }
+.sk-place-name { font-family:'Inter',sans-serif; font-size:14.5px; font-weight:600; color:var(--text); line-height:1.3; margin-bottom:3px; letter-spacing:-0.15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sk-place-addr { font-size:12px; color:var(--text-mid); line-height:1.45; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.sk-place-coords { font-size:10px; color:var(--text-dim); margin-top:auto; padding-top:4px; font-family:monospace; letter-spacing:0.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sk-place-feats-row { display:flex; flex-wrap:nowrap; gap:4px; margin-top:auto; padding-top:4px; overflow:hidden; }
+.sk-place-feat-mini { font-size:10px; color:var(--text-dim); padding:2px 7px; border:1px solid rgba(255,255,255,0.06); border-radius:10px; line-height:1.4; flex-shrink:0; white-space:nowrap; }
+
+/* Map panel — selected place detail card overlay */
+.sk-map-panel { position:relative; }
+.sk-place-detail {
+  position:absolute; top:18px; left:18px;
+  width:340px; max-width:calc(100% - 36px); max-height:calc(100% - 36px);
+  background: linear-gradient(180deg, var(--surface-1) 0%, var(--surface-2) 100%);
+  border:1px solid var(--border);
+  border-radius:14px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,114,0,0.04);
+  z-index: 400;
+  overflow:hidden; display:flex; flex-direction:column;
+  animation: seek-fade-up 0.3s ease both;
+}
+.sk-pd-hero { width:100%; height:140px; background-color:#0a0a0a; background-size:cover; background-position:center; border-bottom:1px solid var(--border); position:relative; flex-shrink:0; }
+.sk-pd-hero-placeholder { display:flex; align-items:center; justify-content:center; height:100%; font-size:48px; opacity:0.18; }
+.sk-pd-close { position:absolute; top:10px; right:10px; width:26px; height:26px; border-radius:50%; background:rgba(0,0,0,0.6); border:1px solid var(--border); color:var(--text-mid); font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.15s; z-index:2; }
+.sk-pd-close:hover { background:rgba(0,0,0,0.8); color:var(--text); border-color:var(--accent); }
+.sk-pd-body { padding:14px 16px 16px; overflow-y:auto; }
+.sk-pd-kind { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; color:var(--accent-warm); margin-bottom:6px; }
+.sk-pd-name { font-family:'Inter',sans-serif; font-size:19px; font-weight:500; color:var(--text); line-height:1.25; margin-bottom:10px; letter-spacing:-0.2px; }
+.sk-pd-addr-row { display:flex; gap:8px; align-items:flex-start; font-size:12.5px; color:var(--text-mid); line-height:1.55; margin-bottom:10px; }
+.sk-pd-addr-row svg { flex-shrink:0; margin-top:2px; opacity:0.7; }
+.sk-pd-feats { display:flex; flex-wrap:wrap; gap:5px; margin:12px 0 6px; }
+.sk-pd-feat { font-size:11px; color:var(--text); padding:4px 9px; border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,0.025); display:inline-flex; align-items:center; gap:4px; line-height:1.4; }
+.sk-pd-feat-ico { font-size:11px; line-height:1; }
+.sk-pd-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:14px; padding-top:12px; border-top:1px solid var(--border); }
+.sk-pd-act { display:inline-flex; align-items:center; gap:6px; padding:7px 11px; font-size:12px; border:1px solid var(--border); border-radius:7px; background:none; color:var(--text-mid); text-decoration:none; cursor:pointer; font-family:inherit; transition:all 0.15s; }
+.sk-pd-act-primary { background:var(--accent); border-color:var(--accent); color:#0a0a0a; font-weight:500; }
+.sk-pd-act:hover { border-color:var(--accent); color:var(--accent); }
+.sk-pd-act-primary:hover { background:var(--accent-warm); color:#0a0a0a; opacity:0.95; }
+.sk-pd-act svg { width:13px; height:13px; }
+.sk-pd-coords { font-size:10px; color:var(--text-dim); font-family:monospace; letter-spacing:0.3px; margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.04); }
+.sk-map-panel { flex:1; position:relative; overflow:hidden; }
+#sk-leaflet-map { position:absolute; inset:0; }
+.sk-map-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+.sk-places-search-outer { position:relative; }
+.sk-map-ac { position:absolute; top:100%; left:0; right:0; background:#111113; border:1px solid rgba(255,255,255,0.12); border-top:none; border-radius:0 0 8px 8px; z-index:200; overflow:hidden; display:none; }
+.sk-map-ac.open { display:block; }
+.sk-map-ac-item { padding:10px 14px; font-size:13px; color:var(--text-mid); cursor:pointer; display:flex; align-items:center; gap:10px; transition:background 0.12s; }
+.sk-map-ac-item:hover { background:rgba(255,255,255,0.04); color:var(--text); }
+.sk-map-ac-item svg { flex-shrink:0; opacity:0.5; }
+.sk-map-ac-type { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-dim); margin-left:auto; flex-shrink:0; }
+.sk-map-loader { display:flex; gap:6px; align-items:center; padding:20px; }
+.sk-map-loader-dot { width:6px; height:6px; border-radius:50%; background:var(--text-dim); animation:sk-pulse 1.2s ease-in-out infinite; }
+.sk-map-loader-dot:nth-child(2) { animation-delay:0.2s; }
+.sk-map-loader-dot:nth-child(3) { animation-delay:0.4s; }
+@keyframes sk-pulse { 0%,80%,100%{transform:scale(0.8);opacity:0.4} 40%{transform:scale(1.1);opacity:1} }
+
+/* Tablet — collapse rail to bottom on all-tab */
+@media (max-width:1100px) {
+  .sk-content-all { grid-template-columns: minmax(0,1fr); gap:32px; }
+  .sk-rail { position:static; flex-direction:row; flex-wrap:wrap; gap:14px; }
+  .sk-rail > * { flex:1 1 280px; }
+  .sk-main-col { max-width:none; }
+  .sk-kp-hero { height:160px; }
+}
+
+/* Responsive — mobile + tablet-in-portrait (rotation aware).
+   A tablet rotated to portrait gets the same single-column treatment as a phone.
+   Trigger when: width<=768 (phones) OR (width<=1100 AND portrait orientation). */
+@media (max-width:768px), (max-width:1100px) and (orientation:portrait) {
+  .sk-header { padding:20px 24px 0; }
+  .sk-content { padding:16px 24px 100px; }
+  .sk-img-grid { columns:160px; column-gap:6px; }
+  .sk-lb-prev { left:6px; }
+  .sk-lb-next { right:6px; }
+  .sk-lb-body { max-width:calc(100vw - 72px); }
+  .sk-vid-thumb { width:120px; height:70px; }
+  .sk-bottom { padding:12px 24px; }
+  .sk-meta { display:none; }
+  .sk-maps-app { flex-direction:column; }
+  .sk-places-panel { width:100%; max-height:45vh; border-right:none; border-bottom:1px solid var(--border); }
+  .sk-map-panel { min-height:55vw; }
+  .sk-rail { flex-direction:column; }
+  .sk-rail > * { flex:1 1 auto; }
+  .sk-feat-title { font-size:21px; }
+  .sk-feat-body { flex-direction:column; gap:14px; }
+  .sk-feat-thumb { width:100%; aspect-ratio:16/9; }
+  /* Results tiles collapse to single-column horizontal cards. */
+  .sk-results-list { display:flex; flex-direction:column; grid-template-columns:none; grid-auto-rows:auto; gap:8px; }
+  .sk-result-link { grid-column:span 1 !important; grid-row:span 1 !important; display:flex; min-height:108px; }
+  .sk-result { padding:12px 14px 14px; gap:12px; }
+  .sk-result-title { font-size:15.5px; -webkit-line-clamp:2; }
+  .sk-result-thumb { width:84px; }
+  .sk-res-tile-small .sk-result-snip { display:none; }
+  /* News tiles collapse to single-column on mobile / tablet portrait. */
+  .sk-news-grid { grid-template-columns: 1fr; grid-auto-rows: auto; gap:10px; }
+  .sk-news-card { grid-column: span 1 !important; grid-row: span 1 !important; min-height:108px; }
+  .sk-tile-small .sk-news-body, .sk-tile-med .sk-news-body, .sk-tile-hero .sk-news-body { padding:12px 14px; }
+  .sk-tile-med .sk-news-thumb, .sk-tile-hero .sk-news-thumb { width:110px; max-width:110px; flex-shrink:0; }
+  .sk-tile-hero { flex-direction:row; }
+  .sk-tile-hero .sk-news-title { font-size:16px; -webkit-line-clamp:3; }
+  .sk-tile-hero .sk-news-snip { display:none; }
+  .sk-tile-small { flex-direction:row; }
+  .sk-tile-small .sk-news-title { font-size:14.5px; }
+  /* Images: tighter masonry on small screens. */
+  .sk-img-grid { columns: 160px; column-gap:4px; }
+  .sk-img-card { margin-bottom:4px; }
+  /* Videos collapse to single-column. */
+  .sk-vid-list { grid-template-columns: 1fr; }
+  .sk-vid-thumb { width:130px; }
+}
+@media (min-width:769px) and (max-width:1100px) and (orientation:landscape) {
+  /* Tablet landscape — keep 4 tracks but cap big tile growth slightly. */
+  .sk-news-grid { grid-auto-rows: 150px; }
+  .sk-tile-hero .sk-news-title { font-size:19px; }
+  .sk-vid-list { grid-template-columns: 1fr; }
+}
+</style>
+
+
+{% if active_tab == 'maps' %}
+<script>
+(function() {
+  var QUERY = {{ q|tojson }};
+  var map = null, markers = [], activeIdx = -1;
+  var __places = [];
+
+  function loadLeaflet(cb) {
+    var css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    css.crossOrigin = '';
+    document.head.appendChild(css);
+    var js = document.createElement('script');
+    js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    js.crossOrigin = '';
+    js.onload = cb;
+    document.head.appendChild(js);
+    var st = document.createElement('style');
+    st.textContent = [
+      '.sk-map-popup .leaflet-popup-content-wrapper{background:#141414;border:1px solid rgba(255,255,255,0.12);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.6);color:#e8e4df;padding:0}',
+      '.sk-map-popup .leaflet-popup-content{margin:12px 16px;font-family:-apple-system,sans-serif}',
+      '.sk-map-popup .leaflet-popup-tip-container{display:none}',
+      '.sk-map-popup .leaflet-popup-close-button{color:#706a64!important;top:8px!important;right:10px!important}',
+      '.leaflet-control-zoom{border:1px solid rgba(255,255,255,0.1)!important}',
+      '.leaflet-control-zoom a{background:#141414!important;color:#a09a94!important;border-bottom:1px solid rgba(255,255,255,0.08)!important}',
+      '.leaflet-control-zoom a:hover{background:#1e1e1e!important;color:#e8e4df!important}',
+      '.leaflet-bar{box-shadow:0 4px 16px rgba(0,0,0,0.5)!important}',
+      '.leaflet-control-attribution{background:rgba(12,12,12,0.75)!important;color:#5a5550!important;font-size:9px!important}',
+      '.leaflet-control-attribution a{color:#706a64!important}'
+    ].join('');
+    document.head.appendChild(st);
+  }
+
+  var TYPE_MAP = {
+    administrative:'city', city:'city', town:'town', village:'village', hamlet:'hamlet',
+    municipality:'municipality', county:'county', state:'state', country:'country',
+    district:'district', borough:'borough', suburb:'neighborhood', quarter:'neighborhood',
+    residential:'neighborhood', neighborhood:'neighborhood', locality:'locality',
+    road:'road', street:'road', path:'path', cycleway:'path', footway:'path', motorway:'highway',
+    house:'building', building:'building', office:'office', commercial:'commercial', retail:'shop',
+    shop:'shop', supermarket:'supermarket', mall:'mall', convenience:'shop',
+    restaurant:'restaurant', cafe:'café', bar:'bar', pub:'pub', fast_food:'fast food',
+    food_court:'food court', bakery:'bakery',
+    hotel:'hotel', hostel:'hostel', motel:'motel', guest_house:'guesthouse',
+    hospital:'hospital', clinic:'clinic', pharmacy:'pharmacy', doctors:'doctor', dentist:'dentist',
+    school:'school', university:'university', college:'college', kindergarten:'kindergarten', library:'library',
+    park:'park', garden:'garden', forest:'forest', nature_reserve:'nature reserve', wood:'forest',
+    beach:'beach', bay:'bay', peak:'peak', mountain:'mountain', hill:'hill', valley:'valley',
+    lake:'lake', river:'river', waterway:'waterway', island:'island', peninsula:'peninsula',
+    airport:'airport', aerodrome:'airport', station:'train station', bus_stop:'bus stop',
+    subway_station:'metro station', tram_stop:'tram stop', ferry_terminal:'ferry terminal',
+    museum:'museum', theatre:'theater', cinema:'cinema', gallery:'gallery', arts_centre:'arts center',
+    place_of_worship:'place of worship', church:'church', mosque:'mosque', temple:'temple', synagogue:'synagogue',
+    bank:'bank', atm:'ATM', post_office:'post office', police:'police', fire_station:'fire station',
+    fuel:'gas station', parking:'parking', car_park:'parking',
+    stadium:'stadium', sports_centre:'sports center', swimming_pool:'pool', gym:'gym', fitness:'gym',
+    monument:'monument', castle:'castle', ruins:'ruins', historic:'historic site', attraction:'attraction',
+    postcode:'postal code', zip_code:'postal code', boundary:'boundary',
+  };
+
+  /* User location — stored in localStorage so we don't keep prompting. */
+  var SK_GEO_KEY = 'horizon_geo';
+  function getUserGeo() {
+    try { var v = JSON.parse(localStorage.getItem(SK_GEO_KEY) || 'null');
+      if (v && v.lat && v.lon && (Date.now() - v.ts < 30*24*3600*1000)) return v;
+    } catch(e) {}
+    return null;
+  }
+  function setUserGeo(g) { try { localStorage.setItem(SK_GEO_KEY, JSON.stringify(g)); } catch(e) {} }
+  function clearUserGeo() { try { localStorage.removeItem(SK_GEO_KEY); } catch(e) {} }
+
+  /* Strip natural-language modifiers Nominatim doesn't understand.
+     "best restaurants near me" → { q: "restaurants", local: true }
+     Local=true forces a tight viewbox so we only get nearby hits. */
+  function cleanMapsQuery(raw) {
+    var q = ' ' + String(raw||'').toLowerCase().trim() + ' ';
+    var local = false;
+    // Phrases that mean "use my location"
+    var locPhrases = [' near me ', ' nearby ', ' near here ', ' around me ', ' around here ', ' close to me ', ' by me ', ' next to me '];
+    for (var i = 0; i < locPhrases.length; i++) {
+      if (q.indexOf(locPhrases[i]) !== -1) { local = true; q = q.split(locPhrases[i]).join(' '); }
+    }
+    // Subjective qualifiers — Nominatim can't rank by quality, drop them.
+    var fillers = [' best ', ' top ', ' good ', ' great ', ' cheap ', ' affordable ', ' nice ', ' cool ', ' awesome ', ' some ', ' a ', ' the ', ' any ', ' nearest ', ' closest '];
+    for (var j = 0; j < fillers.length; j++) {
+      while (q.indexOf(fillers[j]) !== -1) { q = q.split(fillers[j]).join(' '); }
+    }
+    q = q.replace(/\s+/g, ' ').trim();
+    return { q: q, local: local };
+  }
+
+  function nominatim(q, limit) {
+    var cleaned = cleanMapsQuery(q);
+    var effQ = cleaned.q || q;  // if cleaning emptied it (just "near me"), fall back to original
+    var url = 'https://nominatim.openstreetmap.org/search?' +
+      'q=' + encodeURIComponent(effQ) +
+      '&format=json&limit='+(limit||12)+'&addressdetails=1&namedetails=1&extratags=1';
+    /* Bias by user location if known. Width: tight box (~0.2°) when query says "near me",
+       wider (~0.5°) otherwise. bounded=1 when local so we don't get global results. */
+    var geo = getUserGeo();
+    if (geo) {
+      var d = cleaned.local ? 0.2 : 0.5;
+      url += '&viewbox=' + (geo.lon-d) + ',' + (geo.lat+d) + ',' + (geo.lon+d) + ',' + (geo.lat-d);
+      url += cleaned.local ? '&bounded=1' : '&bounded=0';
+    }
+    return fetch(url, { headers: { 'Accept-Language': 'en-US,en', Accept: 'application/json' } })
+      .then(function(r) { return r.json(); });
+  }
+
+  /* Reverse-geocode user lat/lon to a city/neighborhood label for the "near" chip. */
+  function reverseGeoLabel(lat, lon) {
+    return fetch('https://nominatim.openstreetmap.org/reverse?lat='+lat+'&lon='+lon+'&format=json&zoom=12&addressdetails=1',
+      { headers: { 'Accept-Language': 'en-US,en' } })
+      .then(function(r){return r.json();})
+      .then(function(j){
+        var a = (j && j.address) || {};
+        return a.city || a.town || a.village || a.suburb || a.county || a.state || a.country || 'your area';
+      }).catch(function(){ return 'your area'; });
+  }
+
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function getName(p) { return (p.namedetails&&p.namedetails.name) || p.name || p.display_name.split(',')[0].trim(); }
+  function getAddr(p) {
+    var a = p.address||{}, parts = [];
+    if (a.road) parts.push(a.road + (a.house_number ? ' '+a.house_number : ''));
+    parts.push(a.city||a.town||a.village||a.hamlet||'');
+    if (a.state) parts.push(a.state);
+    if (a.country) parts.push(a.country);
+    return parts.filter(Boolean).join(', ') || p.display_name;
+  }
+  function getAddrLines(p) {
+    // Multi-line address (street, city/state, country)
+    var a = p.address||{}, line1='', line2='', line3='';
+    if (a.road) line1 = a.road + (a.house_number ? ' '+a.house_number : '');
+    var locality = a.city||a.town||a.village||a.hamlet||a.suburb||'';
+    var state = a.state||'', postcode = a.postcode||'';
+    line2 = [locality, state, postcode].filter(Boolean).join(', ');
+    line3 = a.country||'';
+    return [line1, line2, line3].filter(Boolean);
+  }
+  function getType(p) {
+    var raw = p.type || p.class || 'place';
+    return TYPE_MAP[raw] || raw.replace(/_/g,' ');
+  }
+  /* Translate OSM extratags into human-readable feature pills with icons. */
+  function getFeatures(p) {
+    var ex = p.extratags || {}, out = [];
+    if (ex.cuisine)        out.push({ico:'🍽', label: ex.cuisine.replace(/_/g,' ').replace(/;/g,' · ')});
+    if (ex.wheelchair === 'yes') out.push({ico:'♿', label:'wheelchair accessible'});
+    if (ex.takeaway === 'yes' || ex.takeaway === 'only') out.push({ico:'🥡', label:'takeaway'});
+    if (ex.delivery === 'yes')   out.push({ico:'🛵', label:'delivery'});
+    if (ex.outdoor_seating === 'yes') out.push({ico:'☀', label:'outdoor seating'});
+    if (ex.indoor_seating === 'yes')  out.push({ico:'🪑', label:'indoor seating'});
+    if (ex.smoking === 'no')     out.push({ico:'🚭', label:'non-smoking'});
+    if (ex.dog === 'yes' || ex.dogs === 'yes') out.push({ico:'🐕', label:'dog friendly'});
+    if (ex.internet_access === 'wlan' || ex.internet_access === 'yes' || ex.wifi === 'free' || ex.wifi === 'yes') out.push({ico:'📶', label:'wi-fi'});
+    if (ex.opening_hours)        out.push({ico:'🕒', label: ex.opening_hours.length > 24 ? 'opening hours' : ex.opening_hours});
+    if (ex.phone || (p.address && p.address.phone)) out.push({ico:'📞', label: ex.phone || p.address.phone});
+    if (ex['payment:cards'] === 'yes' || ex['payment:credit_cards'] === 'yes' || ex['payment:visa'] === 'yes') out.push({ico:'💳', label:'cards accepted'});
+    return out.slice(0, 8);
+  }
+  function getWebsite(p) {
+    var ex = p.extratags || {};
+    return ex.website || ex['contact:website'] || ex.url || null;
+  }
+  function getWikidata(p) {
+    var ex = p.extratags || {};
+    return ex.wikidata || ex['brand:wikidata'] || null;
+  }
+  function osmDirectionsUrl(p) {
+    return 'https://www.openstreetmap.org/directions?to=' + p.lat + ',' + p.lon;
+  }
+  function osmObjectUrl(p) {
+    return 'https://www.openstreetmap.org/' + p.osm_type + '/' + p.osm_id;
+  }
+
+  function renderList(places) {
+    var list = document.getElementById('sk-places-list');
+    var status = document.getElementById('sk-map-status');
+    if (!places.length) {
+      list.innerHTML = '<div style="padding:24px 20px;color:var(--text-dim);font-size:13px">no places found</div>';
+      status.textContent = 'no results';
+      return;
+    }
+    status.textContent = places.length + ' place' + (places.length !== 1 ? 's' : '') + ' found';
+    list.innerHTML = places.map(function(p, i) {
+      var feats = getFeatures(p).slice(0, 3);
+      var featsHtml = feats.length ? '<div class="sk-place-feats-row">' +
+        feats.map(function(f){ return '<span class="sk-place-feat-mini">'+f.ico+' '+esc(f.label)+'</span>'; }).join('') +
+        '</div>' : '';
+      return '<div class="sk-place-item" data-idx="'+i+'">' +
+        '<div class="sk-place-type">'+esc(getType(p))+'</div>' +
+        '<div class="sk-place-name">'+esc(getName(p))+'</div>' +
+        '<div class="sk-place-addr">'+esc(getAddr(p))+'</div>' +
+        featsHtml +
+        '</div>';
+    }).join('');
+    list.querySelectorAll('.sk-place-item').forEach(function(el) {
+      el.addEventListener('click', function() { setActive(parseInt(el.dataset.idx)); });
+      el.addEventListener('mouseenter', function() {
+        var i = parseInt(el.dataset.idx);
+        if (markers[i]) markers[i].openPopup();
+      });
+    });
+  }
+
+  /* Render the rich detail overlay card on the map panel. */
+  function renderDetail(p) {
+    var card = document.getElementById('sk-place-detail');
+    if (!p) { card.style.display = 'none'; return; }
+    var feats = getFeatures(p);
+    var website = getWebsite(p);
+    var wikidata = getWikidata(p);
+    var addrLines = getAddrLines(p);
+
+    var hero = '<div class="sk-pd-hero"><div class="sk-pd-hero-placeholder">🌅</div>' +
+      '<button class="sk-pd-close" onclick="skMapHideDetail()" aria-label="close">✕</button></div>';
+
+    var addrHtml = addrLines.length ?
+      '<div class="sk-pd-addr-row">' +
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>' +
+      '<span>' + addrLines.map(esc).join('<br>') + '</span></div>' : '';
+
+    var featsHtml = feats.length ?
+      '<div class="sk-pd-feats">' +
+      feats.map(function(f){
+        return '<span class="sk-pd-feat"><span class="sk-pd-feat-ico">'+f.ico+'</span>'+esc(f.label)+'</span>';
+      }).join('') + '</div>' : '';
+
+    var actions = [];
+    actions.push('<a class="sk-pd-act sk-pd-act-primary" href="'+esc(osmDirectionsUrl(p))+'" target="_blank" rel="noopener">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>directions</a>');
+    if (website) {
+      actions.push('<a class="sk-pd-act" href="'+esc(website)+'" target="_blank" rel="noopener">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>website</a>');
+    }
+    actions.push('<a class="sk-pd-act" href="'+esc(osmObjectUrl(p))+'" target="_blank" rel="noopener">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>OSM</a>');
+    if (wikidata) {
+      actions.push('<a class="sk-pd-act" href="https://www.wikidata.org/wiki/'+esc(wikidata)+'" target="_blank" rel="noopener">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="3" y2="18"/><line x1="9" y1="6" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="18"/><line x1="21" y1="6" x2="21" y2="18"/></svg>wikidata</a>');
+    }
+
+    card.innerHTML = hero +
+      '<div class="sk-pd-body">' +
+        '<div class="sk-pd-kind">'+esc(getType(p))+'</div>' +
+        '<div class="sk-pd-name">'+esc(getName(p))+'</div>' +
+        addrHtml +
+        featsHtml +
+        '<div class="sk-pd-actions">'+actions.join('')+'</div>' +
+        '<div class="sk-pd-coords">'+parseFloat(p.lat).toFixed(5)+', '+parseFloat(p.lon).toFixed(5)+'</div>' +
+      '</div>';
+    card.style.display = 'flex';
+
+    /* If brand/place has wikidata, try to fetch a Wikipedia thumbnail to fill the hero. */
+    if (wikidata) {
+      fetch('https://www.wikidata.org/w/api.php?action=wbgetentities&ids='+encodeURIComponent(wikidata)+'&props=sitelinks/urls&sitefilter=enwiki&format=json&origin=*')
+        .then(function(r){return r.json();})
+        .then(function(j){
+          var ent = j.entities && j.entities[wikidata];
+          var enwiki = ent && ent.sitelinks && ent.sitelinks.enwiki;
+          if (!enwiki || !enwiki.title) return;
+          return fetch('https://en.wikipedia.org/api/rest_v1/page/summary/'+encodeURIComponent(enwiki.title))
+            .then(function(r){return r.json();})
+            .then(function(s){
+              var src = (s.thumbnail && s.thumbnail.source) || (s.originalimage && s.originalimage.source);
+              if (src) {
+                var hero = card.querySelector('.sk-pd-hero');
+                hero.style.backgroundImage = 'url('+src+')';
+                var ph = hero.querySelector('.sk-pd-hero-placeholder');
+                if (ph) ph.style.display = 'none';
+              }
+            });
+        }).catch(function(){ /* silent */ });
+    }
+  }
+  window.skMapHideDetail = function() {
+    var card = document.getElementById('sk-place-detail');
+    if (card) card.style.display = 'none';
+  };
+
+  function setActive(i) {
+    activeIdx = i;
+    document.querySelectorAll('.sk-place-item').forEach(function(el, j) {
+      el.classList.toggle('sk-place-active', j === i);
+    });
+    var el = document.querySelector('.sk-place-item[data-idx="'+i+'"]');
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (markers[i]) {
+      map.flyTo(markers[i].getLatLng(), Math.max(map.getZoom(), 14), { duration: 0.5 });
+    }
+    if (typeof __places !== 'undefined' && __places[i]) renderDetail(__places[i]);
+  }
+
+  var userMarker = null;
+  function userMarkerIcon() {
+    return L.divIcon({
+      html: '<div class="sk-you-here"><span class="sk-you-pulse"></span><span class="sk-you-dot"></span></div>',
+      className: '', iconSize: [22, 22], iconAnchor: [11, 11]
+    });
+  }
+  function addUserMarker() {
+    if (!map) return;
+    var g = getUserGeo();
+    if (!g) return;
+    if (userMarker) { try { userMarker.remove(); } catch(e) {} userMarker = null; }
+    userMarker = L.marker([g.lat, g.lon], { icon: userMarkerIcon(), interactive: false, keyboard: false, zIndexOffset: 500 }).addTo(map);
+  }
+  /* Ensure a Leaflet map exists centered on the user (used when locate granted with no places). */
+  function ensureUserMap(g) {
+    if (!map) {
+      map = L.map('sk-leaflet-map', { zoomControl: true });
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© <a href="https://openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd', maxZoom: 20
+      }).addTo(map);
+    }
+    map.setView([g.lat, g.lon], Math.max(map.getZoom() || 0, 14));
+    addUserMarker();
+  }
+
+  function buildMap(places) {
+    map = L.map('sk-leaflet-map', { zoomControl: true });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© <a href="https://openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd', maxZoom: 20
+    }).addTo(map);
+
+    function mkIcon(active) {
+      var s = active ? 18 : 14, glow = active ? '0 0 0 5px rgba(255,114,0,0.35)' : '0 0 0 3px rgba(255,114,0,0.2)';
+      return L.divIcon({
+        html: '<div style="width:'+s+'px;height:'+s+'px;border-radius:50%;background:#ff7200;border:2.5px solid rgba(255,255,255,0.95);box-shadow:'+glow+',0 2px 8px rgba(0,0,0,0.5)"></div>',
+        className: '', iconSize: [s,s], iconAnchor: [s/2,s/2], popupAnchor: [0,-s/2-4]
+      });
+    }
+
+    markers = [];
+    var bounds = [];
+    places.forEach(function(p, i) {
+      var lat = parseFloat(p.lat), lon = parseFloat(p.lon);
+      if (!lat && !lon) return;
+      var m = L.marker([lat,lon], { icon: mkIcon(false) })
+        .addTo(map)
+        .bindPopup(
+          '<div style="min-width:160px">' +
+            '<div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#ff7200;margin-bottom:4px">'+esc(getType(p))+'</div>' +
+            '<div style="font-size:15px;font-weight:600;color:#e8e4df;margin-bottom:4px;letter-spacing:-0.2px">'+esc(getName(p))+'</div>' +
+            '<div style="font-size:11px;color:#a09a94;line-height:1.4">'+esc(getAddr(p))+'</div>' +
+          '</div>',
+          { className: 'sk-map-popup', maxWidth: 260 }
+        );
+      m.on('click', function() {
+        markers.forEach(function(mk,j){ if(mk) mk.setIcon(mkIcon(j===i)); });
+        setActive(i);
+      });
+      markers[i] = m;
+      bounds.push([lat, lon]);
+    });
+
+    if (bounds.length === 1) {
+      map.setView(bounds[0], 15);
+      markers[0] && markers[0].setIcon(mkIcon(true));
+      setActive(0);
+    } else if (bounds.length > 1) {
+      map.fitBounds(bounds, { padding: [48,48], maxZoom: 14 });
+    }
+    // After place markers are drawn, also drop the user pin if location is known.
+    addUserMarker();
+  }
+
+  function doSearch(q) {
+    if (!q) {
+      document.getElementById('sk-map-status').textContent = 'type a place to search';
+      document.getElementById('sk-places-list').innerHTML =
+        '<div style="padding:24px 20px;color:var(--text-dim);font-size:13px;line-height:1.6">type a place above, or click the locate button to explore near you.</div>';
+      return;
+    }
+    // If the query asks for "near me" but we don't have user geo yet, prompt and retry.
+    var cleaned = cleanMapsQuery(q);
+    if (cleaned.local && !getUserGeo()) {
+      requestLocation(function() { doSearch(q); });
+      return;
+    }
+    document.getElementById('sk-map-status').textContent = 'searching…';
+    document.getElementById('sk-places-list').innerHTML =
+      '<div class="sk-map-loader"><span class="sk-map-loader-dot"></span><span class="sk-map-loader-dot"></span><span class="sk-map-loader-dot"></span></div>';
+    if (map) { map.remove(); map = null; markers = []; }
+    skMapHideDetail();
+    nominatim(q).then(function(places) {
+      __places = places;
+      renderList(places);
+      var empty = document.getElementById('sk-map-empty');
+      if (places.length) { buildMap(places); empty.style.display = 'none'; }
+      else { empty.style.display = 'flex'; }
+      document.getElementById('sk-map-status').textContent = places.length + ' place' + (places.length===1?'':'s');
+    }).catch(function() {
+      document.getElementById('sk-places-list').innerHTML =
+        '<div style="padding:20px;color:var(--text-dim);font-size:13px">search failed</div>';
+      document.getElementById('sk-map-status').textContent = 'error';
+    });
+  }
+
+  // ── Places search input + debounced autocomplete ──────────────────
+  var mapInput = document.getElementById('sk-map-q');
+  var acEl = document.getElementById('sk-map-ac');
+  var acTimer = null, acResults = [];
+
+  function showAC(places) {
+    if (!places.length) { hideAC(); return; }
+    acResults = places;
+    acEl.innerHTML = places.map(function(p, i) {
+      return '<div class="sk-map-ac-item" data-idx="'+i+'">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' +
+        '<span>'+esc(getName(p))+'</span>' +
+        '<span class="sk-map-ac-type">'+esc(getType(p))+'</span>' +
+        '</div>';
+    }).join('');
+    acEl.querySelectorAll('.sk-map-ac-item').forEach(function(el) {
+      el.addEventListener('mousedown', function(e) {
+        e.preventDefault(); // don't blur input
+        var p = acResults[parseInt(el.dataset.idx)];
+        mapInput.value = getName(p);
+        hideAC();
+        doSearch(getName(p));
+      });
+    });
+    acEl.classList.add('open');
+  }
+
+  function hideAC() { acEl.classList.remove('open'); acEl.innerHTML = ''; }
+
+  mapInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); hideAC(); doSearch(mapInput.value.trim() || QUERY); }
+    if (e.key === 'Escape') hideAC();
+  });
+
+  mapInput.addEventListener('input', function() {
+    var q = mapInput.value.trim();
+    clearTimeout(acTimer);
+    if (q.length < 2) { hideAC(); return; }
+    acTimer = setTimeout(function() {
+      nominatim(q, 6).then(showAC).catch(hideAC);
+    }, 300);
+  });
+
+  mapInput.addEventListener('blur', function() { setTimeout(hideAC, 150); });
+
+  // ── Geolocation chip + locate button ───────────────────────────────
+  var locateBtn  = document.getElementById('sk-map-locate');
+  var nearChip   = document.getElementById('sk-map-near');
+  var nearTxt    = document.getElementById('sk-map-near-txt');
+  var nearClear  = document.getElementById('sk-map-near-clear');
+
+  function updateNearChip() {
+    var g = getUserGeo();
+    if (g) {
+      nearChip.style.display = 'inline-flex';
+      nearTxt.textContent = 'near ' + (g.label || 'you');
+      locateBtn.classList.add('sk-locate-active');
+    } else {
+      nearChip.style.display = 'none';
+      locateBtn.classList.remove('sk-locate-active');
+    }
+  }
+
+  function requestLocation(onDone) {
+    if (!navigator.geolocation) {
+      document.getElementById('sk-map-status').textContent = 'geolocation unsupported';
+      return;
+    }
+    locateBtn.classList.add('sk-locate-loading');
+    document.getElementById('sk-map-status').textContent = 'locating you…';
+    navigator.geolocation.getCurrentPosition(function(pos) {
+      var g = { lat: pos.coords.latitude, lon: pos.coords.longitude, ts: Date.now() };
+      reverseGeoLabel(g.lat, g.lon).then(function(label) {
+        g.label = label;
+        setUserGeo(g);
+        locateBtn.classList.remove('sk-locate-loading');
+        updateNearChip();
+        if (onDone) onDone(g);
+      });
+    }, function(err) {
+      locateBtn.classList.remove('sk-locate-loading');
+      document.getElementById('sk-map-status').textContent =
+        err.code === 1 ? 'location permission denied' : 'couldn\'t get location';
+    }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 5*60*1000 });
+  }
+
+  locateBtn.addEventListener('click', function() {
+    requestLocation(function(g) {
+      var q = mapInput.value.trim() || QUERY;
+      if (q) {
+        // Search runs through doSearch → buildMap, which re-adds the user marker at the end.
+        doSearch(q);
+      } else {
+        // No query — just center the map on the user so they can see where they are.
+        ensureUserMap(g);
+        document.getElementById('sk-map-status').textContent = 'near ' + (g.label || 'you');
+        document.getElementById('sk-places-list').innerHTML =
+          '<div style="padding:24px 20px;color:var(--text-dim);font-size:13px;line-height:1.6">try searching for restaurants, parks, coffee shops…</div>';
+        var emptyEl = document.getElementById('sk-map-empty');
+        if (emptyEl) emptyEl.style.display = 'none';
+      }
+    });
+  });
+  nearClear.addEventListener('click', function(e) {
+    e.stopPropagation();
+    clearUserGeo();
+    updateNearChip();
+    doSearch(mapInput.value.trim() || QUERY);
+  });
+
+  updateNearChip();
+
+  loadLeaflet(function() { doSearch(QUERY); });
+})();
+</script>
+{% endif %}
+
+{% if active_tab == 'images' %}
+<script>
+(function() {
+  var cards = Array.from(document.querySelectorAll('.sk-img-card'));
+  var lb = document.getElementById('skLightbox');
+  var lbImg = document.getElementById('skLbImg');
+  var lbTitle = document.getElementById('skLbTitle');
+  var lbDomain = document.getElementById('skLbDomain');
+  var lbLink = document.getElementById('skLbLink');
+  var lbPrev = document.querySelector('.sk-lb-prev');
+  var lbNext = document.querySelector('.sk-lb-next');
+  var idx = -1;
+
+  function show(i) {
+    idx = i;
+    var el = cards[idx];
+    lbImg.src = '';
+    lbImg.src = el.dataset.full || el.dataset.thumb;
+    lbTitle.textContent = el.dataset.title || '';
+    lbDomain.textContent = el.dataset.domain || '';
+    lbLink.href = el.dataset.url || '#';
+    lbPrev.style.opacity = idx > 0 ? '1' : '0.25';
+    lbNext.style.opacity = idx < cards.length - 1 ? '1' : '0.25';
+    lb.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  }
+
+  window.skImgOpen = function(el) { show(cards.indexOf(el)); };
+  window.skImgNav  = function(dir) { var n = idx + dir; if (n >= 0 && n < cards.length) show(n); };
+  window.skImgClose = function() { lb.style.display = 'none'; document.body.style.overflow = ''; };
+
+  document.addEventListener('keydown', function(e) {
+    if (lb.style.display === 'none') return;
+    if (e.key === 'Escape') skImgClose();
+    if (e.key === 'ArrowLeft')  skImgNav(-1);
+    if (e.key === 'ArrowRight') skImgNav(1);
+  });
+})();
+</script>
+{% endif %}
+
+{# ══ AI Panel — opt-in. Wires up only when enabled in Horizon settings. ══ #}
+<script>
+(function(){
+  var pill   = document.getElementById('skAiPill');
+  var panel  = document.getElementById('skAiPanel');
+  var body   = document.getElementById('skAiBody');
+  var input  = document.getElementById('skAiInput');
+  var form   = document.getElementById('skAiForm');
+  var send   = document.getElementById('skAiSend');
+  if (!pill || !panel) return;
+
+  function settings(){ return (window.HorizonSettings && window.HorizonSettings.load()) || {enabled:false}; }
+  function configured(){ var s = settings(); return s.enabled && s.url && s.model; }
+
+  function syncToggle(){
+    // Pill is always visible; just close the panel if config went away.
+    if (!configured()) closeAiPanel();
+  }
+
+  function setPillState(on){
+    pill.classList.toggle('on', !!on);
+    pill.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  window.openAiPanel  = function(){ panel.classList.add('open'); panel.setAttribute('aria-hidden','false'); setPillState(true); setTimeout(function(){ input && input.focus(); }, 200); };
+  window.closeAiPanel = function(){ panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); setPillState(false); };
+  window.toggleAiPanel = function(){
+    if (!configured()) { openHorizonSettings(); return; }
+    if (panel.classList.contains('open')) closeAiPanel(); else openAiPanel();
+  };
+
+  // Autosize textarea
+  if (input) {
+    input.addEventListener('input', function(){ this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
+    input.addEventListener('keydown', function(e){ if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form && form.requestSubmit && form.requestSubmit(); } });
+  }
+
+  // Quick-prompt chips
+  document.querySelectorAll('.sk-ai-chip').forEach(function(c){
+    c.addEventListener('click', function(){
+      if (!input) return;
+      input.value = c.getAttribute('data-prompt') || '';
+      input.dispatchEvent(new Event('input'));
+      form && form.requestSubmit && form.requestSubmit();
+    });
+  });
+
+  // ─── Result collection for prompt context ─────────────────────────
+  // Starts with everything visible on the page; grows as the model calls search().
+  var allResults = null;
+  function collectResults(){
+    if (allResults) return allResults;
+    allResults = [];
+    var sel = '.sk-feat-link, .sk-result-link, .sk-news-card, .sk-video-card';
+    document.querySelectorAll(sel).forEach(function(n){
+      var titleEl = n.querySelector('.sk-feat-title, .sk-result-title, .sk-news-title, .sk-vid-title');
+      var snipEl  = n.querySelector('.sk-feat-snip, .sk-result-snip, .sk-news-snip, .sk-vid-snip');
+      var srcEl   = n.querySelector('.sk-feat-src span, .sk-result-src span, .sk-news-src span, .sk-vid-src span');
+      var dateEl  = n.querySelector('.sk-news-date, .sk-vid-date');
+      allResults.push({
+        url:    n.getAttribute('href') || '',
+        title:  (titleEl && titleEl.textContent || '').trim(),
+        snippet:(snipEl  && snipEl.textContent  || '').trim(),
+        source: (srcEl   && srcEl.textContent   || '').trim(),
+        date:   (dateEl  && dateEl.textContent  || '').trim(),
+        node:   n
+      });
+    });
+    return allResults;
+  }
+
+  function appendToolResults(items){
+    var list = collectResults();
+    var startIdx = list.length + 1;
+    items.forEach(function(r){
+      list.push({
+        url:     r.url || '',
+        title:   r.title || '',
+        snippet: r.snippet || '',
+        source:  r.source || '',
+        date:    r.date || '',
+        node:    null   // tool-fetched: no DOM node; click opens URL.
+      });
+    });
+    return startIdx;
+  }
+
+  function buildContextBlock(results){
+    if (!results.length) return '(no results currently visible on the page)';
+    return results.map(function(r, i){
+      var lines = ['[' + (i+1) + '] ' + (r.title || '(no title)')];
+      if (r.source) lines.push('source: ' + r.source);
+      if (r.date)   lines.push('date: ' + r.date);
+      if (r.url)    lines.push('url: ' + r.url);
+      if (r.snippet) lines.push('snippet: ' + r.snippet);
+      return lines.join('\n');
+    }).join('\n\n');
+  }
+
+  var SYSTEM_PROMPT = [
+    "You are an assistant embedded in a private search engine called Horizon. The user is viewing result cards numbered [1]..[N], shown at the end of this message.",
+    "",
+    "TOOLS — pick the right one based on user intent:",
+    "  • goto_search(query, category) — Loads a new results page in the user's browser so they can browse it themselves. USE THIS BY DEFAULT whenever the user asks you to search, find, look up, locate, pull up, show, browse, or check on a topic. Anything that says \"find me X\", \"search for X\", \"help me search X\", \"look up X\" -> goto_search.",
+    "  • search(query, category) — Fetches a few result snippets INVISIBLY and gives them only to you as added context. Use this ONLY when answering a factual question and the visible cards are insufficient. NEVER use this when the user explicitly asked you to search for them.",
+    "",
+    "INTENT RULES (apply in order):",
+    "  1. If the user's message contains verbs like \"search\", \"find\", \"look up\", \"show me\", \"pull up\", \"go to\" + a topic -> call goto_search.",
+    "  2. Else if you can answer from the visible cards or general knowledge -> answer directly, no tool.",
+    "  3. Else, if you need more facts to answer -> call search.",
+    "",
+    "BEFORE ANY TOOL CALL: always write one short sentence acknowledging what you're about to do (\"Sure, pulling that up for you now.\" or \"Let me grab more details.\"). Never call a tool with empty content.",
+    "",
+    "CITATIONS: cite ONLY with bracket numbers [1], [12], [25]. Never cite by source name. When the background search() returns, new results are numbered as continuation of the existing list — use those new numbers.",
+    "",
+    "FORMAT: markdown — **bold**, *italic*, `-` for bullets, `1.` for numbered lists, `##` for small headers, [text](url) for links. Be concise, lead with the answer, no preamble. If you rely on general knowledge (not cards/search), briefly say so."
+  ].join('\n');
+
+  var TOOLS = [
+    {
+      type: 'function',
+      function: {
+        name: 'goto_search',
+        description: "Navigate the user's page to a new Horizon search. Use when the user asks you to find / search / look up something — they want to see the results page themselves. Do NOT use just to gather context for your own answer (use search() for that).",
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query terms.' },
+            category: { type: 'string', enum: ['general','news','images','videos','map'], description: 'Which Horizon tab to load. Default: general.' }
+          },
+          required: ['query']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'search',
+        description: 'Run a Horizon search in the background and get back the top result snippets as added context for your own answer. Does NOT change the user\'s page. Use only when the visible cards do not answer the question.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query terms.' },
+            category: { type: 'string', enum: ['general','news','images','videos'], description: 'Which result category to search. Default: general.' }
+          },
+          required: ['query']
+        }
+      }
+    }
+  ];
+  var MAX_HOPS = 3;
+
+  // ─── Conversation history (persists across follow-ups in this tab) ────
+  var conversation = [];  // [{role, content}, ...]
+
+  function buildMessages(userText){
+    var ctx = buildContextBlock(collectResults());
+    var sys = SYSTEM_PROMPT + '\n\n--- RESULT CARDS ---\n' + ctx;
+    var msgs = [{role: 'system', content: sys}];
+    conversation.forEach(function(m){ msgs.push(m); });
+    msgs.push({role: 'user', content: userText});
+    return msgs;
+  }
+
+  // ─── DOM helpers ─────────────────────────────────────────────────
+  function clearEmpty(){
+    var emp = body.querySelector('.sk-ai-empty');
+    if (emp) emp.remove();
+  }
+  function appendUser(text){
+    var d = document.createElement('div');
+    d.className = 'sk-ai-msg sk-ai-msg-user';
+    d.textContent = text;
+    clearEmpty();
+    body.appendChild(d);
+    var n = collectResults().length;
+    var ctx = document.createElement('div');
+    ctx.className = 'sk-ai-ctx';
+    ctx.textContent = n ? ('using ' + n + ' result card' + (n===1?'':'s') + ' as context') : 'no result cards visible on this page';
+    body.appendChild(ctx);
+    body.scrollTop = body.scrollHeight;
+  }
+  function appendThinking(text){
+    var d = document.createElement('div');
+    d.className = 'sk-ai-thinking';
+    d.textContent = text || 'thinking…';
+    body.appendChild(d);
+    body.scrollTop = body.scrollHeight;
+    return d;
+  }
+  function appendError(text){
+    var d = document.createElement('div');
+    d.className = 'sk-ai-msg sk-ai-msg-err';
+    d.textContent = text;
+    body.appendChild(d);
+    body.scrollTop = body.scrollHeight;
+  }
+  function appendAssistant(){
+    var d = document.createElement('div');
+    d.className = 'sk-ai-msg sk-ai-msg-ai';
+    body.appendChild(d);
+    body.scrollTop = body.scrollHeight;
+    return d;
+  }
+
+  // ─── Tiny markdown renderer (bold, italic, code, links, lists, headers) ───
+  function mdInline(s){
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/__([^_\n]+?)__/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[\s(])\*([^*\n]+?)\*(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');
+    s = s.replace(/(^|[\s(])_([^_\n]+?)_(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    return s;
+  }
+  function renderMarkdown(text){
+    text = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    var lines = text.split('\n');
+    var html = [];
+    var i = 0;
+    function isBullet(l){ return /^\s*[-*+]\s+/.test(l); }
+    function isNumbered(l){ return /^\s*\d+\.\s+/.test(l); }
+    function isHeader(l){ return /^#{1,4}\s+/.test(l); }
+    while (i < lines.length) {
+      var line = lines[i];
+      if (!line.trim()) { i++; continue; }
+      if (isHeader(line)) {
+        var m = line.match(/^(#{1,4})\s+(.*)/);
+        var lvl = Math.min(m[1].length + 2, 4); // bump down so even ## stays smallish
+        html.push('<h' + lvl + ' class="sk-ai-h">' + mdInline(m[2]) + '</h' + lvl + '>');
+        i++; continue;
+      }
+      if (isBullet(line)) {
+        var items = [];
+        while (i < lines.length && isBullet(lines[i])) {
+          var item = lines[i].replace(/^\s*[-*+]\s+/, '');
+          i++;
+          while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !isBullet(lines[i]) && !isNumbered(lines[i])) {
+            item += ' ' + lines[i].trim();
+            i++;
+          }
+          items.push('<li>' + mdInline(item) + '</li>');
+        }
+        html.push('<ul>' + items.join('') + '</ul>');
+        continue;
+      }
+      if (isNumbered(line)) {
+        var oitems = [];
+        while (i < lines.length && isNumbered(lines[i])) {
+          var oitem = lines[i].replace(/^\s*\d+\.\s+/, '');
+          i++;
+          while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !isBullet(lines[i]) && !isNumbered(lines[i])) {
+            oitem += ' ' + lines[i].trim();
+            i++;
+          }
+          oitems.push('<li>' + mdInline(oitem) + '</li>');
+        }
+        html.push('<ol>' + oitems.join('') + '</ol>');
+        continue;
+      }
+      // Paragraph
+      var para = [];
+      while (i < lines.length && lines[i].trim() && !isBullet(lines[i]) && !isNumbered(lines[i]) && !isHeader(lines[i])) {
+        para.push(lines[i].trim());
+        i++;
+      }
+      html.push('<p>' + mdInline(para.join(' ')) + '</p>');
+    }
+    return html.join('');
+  }
+
+  // Wraps [N] tokens into clickable citation chips after markdown render.
+  // Tool-fetched results (no DOM node) open their URL in a new tab on click.
+  function renderWithCitations(el, text){
+    var results = collectResults();
+    var html = renderMarkdown(text);
+    html = html.replace(/\[(\d{1,3})\]/g, function(_, n){
+      var i = parseInt(n, 10);
+      if (i < 1 || i > results.length) return '[' + n + ']';
+      return '<span class="sk-ai-cite" data-i="' + i + '">' + n + '</span>';
+    });
+    el.innerHTML = html;
+    el.querySelectorAll('.sk-ai-cite').forEach(function(c){
+      c.addEventListener('click', function(ev){
+        ev.preventDefault();
+        var i = parseInt(c.getAttribute('data-i'), 10) - 1;
+        var r = results[i];
+        if (!r) return;
+        if (r.node) {
+          r.node.scrollIntoView({behavior:'smooth', block:'center'});
+          r.node.classList.remove('sk-flash'); void r.node.offsetWidth; r.node.classList.add('sk-flash');
+        } else if (r.url) {
+          window.open(r.url, '_blank', 'noopener,noreferrer');
+        }
+      });
+    });
+  }
+
+  // ─── Streaming call with agentic search loop ─────────────────────
+  var inflight = null;
+  function setBusy(b){ send.disabled = !!b; }
+  function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function appendToolIndicator(text){
+    var d = document.createElement('div');
+    d.className = 'sk-ai-tool';
+    d.innerHTML = text;
+    body.appendChild(d);
+    body.scrollTop = body.scrollHeight;
+    return d;
+  }
+
+  function runSearchTool(args){
+    var query = (args && args.query) || '';
+    var cat = ((args && args.category) || 'general').toLowerCase();
+    if (['general','news','images','videos'].indexOf(cat) === -1) cat = 'general';
+    var url = '/search?q=' + encodeURIComponent(query) + '&format=json&category_' + cat + '=1';
+    return fetch(url).then(function(r){ if (!r.ok) throw new Error('search HTTP ' + r.status); return r.json(); })
+      .then(function(data){
+        return (data.results || []).slice(0, 8).map(function(r){
+          return {
+            title: r.title || '',
+            url: r.url || '',
+            source: (r.parsed_url && r.parsed_url[1]) || '',
+            snippet: (r.content || '').slice(0, 280)
+          };
+        });
+      });
+  }
+
+  function askOllama(userText){
+    var s = settings();
+    if (!s.url || !s.model) {
+      appendError('Set your Ollama URL and model in Horizon settings first.');
+      return;
+    }
+    var messages = buildMessages(userText);
+    conversation.push({role: 'user', content: userText});
+
+    var thinking = appendThinking('thinking…');
+    setBusy(true);
+    runLoop(messages, MAX_HOPS, thinking, null);
+  }
+
+  function runLoop(messages, hopsLeft, thinkingEl, assistantEl){
+    var s = settings();
+    var temp = (typeof s.temperature === 'number') ? s.temperature : 0.7;
+    var payload = {
+      model: s.model,
+      messages: messages,
+      stream: true,
+      tools: TOOLS,
+      options: {
+        temperature: temp,
+        repeat_penalty: 1.15,
+        num_predict: 2048
+      }
+    };
+    if (s.think === true) payload.think = true;
+    else if (s.think === false) payload.think = false;
+
+    var controller = new AbortController();
+    inflight = controller;
+
+    fetch(s.url + '/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    })
+    .then(function(r){
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' from Ollama');
+      if (!r.body || !r.body.getReader) throw new Error('streaming not supported by this browser');
+      if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
+      if (!assistantEl) assistantEl = appendAssistant();
+
+      var reader = r.body.getReader();
+      var dec = new TextDecoder();
+      var buf = '';
+      var contentSoFar = '';
+      var toolCalls = null;
+
+      function pump(){
+        return reader.read().then(function(chunk){
+          if (chunk.done) {
+            if (toolCalls && toolCalls.length && hopsLeft > 0) {
+              return handleToolCall(toolCalls[0], messages, hopsLeft, contentSoFar, assistantEl);
+            }
+            var finalText = (assistantEl.textContent || '').trim();
+            if (finalText) renderWithCitations(assistantEl, finalText);
+            else assistantEl.remove();
+            conversation.push({role: 'assistant', content: finalText});
+            setBusy(false);
+            inflight = null;
+            return;
+          }
+          buf += dec.decode(chunk.value, {stream: true});
+          var lines = buf.split('\n');
+          buf = lines.pop() || '';
+          lines.forEach(function(line){
+            if (!line.trim()) return;
+            try {
+              var obj = JSON.parse(line);
+              if (obj.message) {
+                if (obj.message.content) {
+                  contentSoFar += obj.message.content;
+                  assistantEl.textContent = contentSoFar;
+                  body.scrollTop = body.scrollHeight;
+                }
+                if (obj.message.tool_calls && obj.message.tool_calls.length) {
+                  toolCalls = obj.message.tool_calls;
+                }
+              }
+              if (obj.error) appendError(obj.error);
+            } catch(_) { /* keep partial line in buf */ }
+          });
+          return pump();
+        });
+      }
+      return pump();
+    })
+    .catch(function(e){
+      if (thinkingEl && thinkingEl.parentNode) thinkingEl.remove();
+      var msg = (e && e.message) || 'request failed';
+      if (e && e.name === 'AbortError') msg = 'cancelled';
+      else if (msg.indexOf('Failed to fetch') !== -1 || msg.indexOf('NetworkError') !== -1) {
+        msg = 'cannot reach Ollama — check the URL and CORS (OLLAMA_ORIGINS=*).';
+      }
+      appendError(msg);
+      setBusy(false);
+      inflight = null;
+    });
+  }
+
+  function gotoSearch(query, category){
+    var cat = (category || 'general').toLowerCase();
+    if (['general','news','images','videos','map'].indexOf(cat) === -1) cat = 'general';
+    var url = '/search?q=' + encodeURIComponent(query) + '&category_' + cat + '=1';
+    // Type the query into the visible search input so it looks like the AI used the bar,
+    // then navigate. (Page reload will reset conversation; that's expected.)
+    var q = document.getElementById('q');
+    if (q) {
+      q.value = '';
+      var s = query, j = 0;
+      var iv = setInterval(function(){
+        q.value = s.slice(0, ++j);
+        if (j >= s.length) { clearInterval(iv); setTimeout(function(){ window.location.href = url; }, 180); }
+      }, 18);
+    } else {
+      window.location.href = url;
+    }
+  }
+
+  function renderToolResultsBlock(startIdx, results, query, category){
+    var head = '<div class="sk-ai-tool-results-head">+ ' + results.length + ' new result' + (results.length===1?'':'s') + ' for <em>' + escapeHtml(query) + '</em>' + (category && category !== 'general' ? ' <span class="sk-ai-opt-note">(' + escapeHtml(category) + ')</span>' : '') + '</div>';
+    var rows = results.map(function(r, i){
+      var idx = startIdx + i;
+      return '<a class="sk-ai-tool-result" href="' + escapeHtml(r.url || '#') + '" target="_blank" rel="noopener noreferrer">'
+        + '<span class="sk-ai-tool-idx">[' + idx + ']</span>'
+        + '<span class="sk-ai-tool-title">' + escapeHtml(r.title || '(no title)') + '</span>'
+        + '<span class="sk-ai-tool-src">' + escapeHtml(r.source || '') + '</span>'
+        + '</a>';
+    }).join('');
+    var el = document.createElement('div');
+    el.className = 'sk-ai-tool-results';
+    el.innerHTML = head + rows;
+    return el;
+  }
+
+  function handleToolCall(call, messages, hopsLeft, priorContent, assistantEl){
+    var fn = call.function || {};
+    var name = fn.name;
+    var args = fn.arguments;
+    if (typeof args === 'string') { try { args = JSON.parse(args); } catch(_) { args = {}; } }
+    if (!args || !args.query) {
+      appendError('tool call missing a query.');
+      setBusy(false); inflight = null;
+      return;
+    }
+
+    // Render any acknowledgment text the model wrote BEFORE the tool call.
+    var ackText = (assistantEl && assistantEl.textContent || '').trim();
+    if (ackText) {
+      renderWithCitations(assistantEl, ackText);
+      conversation.push({role: 'assistant', content: ackText});
+    } else if (assistantEl && assistantEl.parentNode) {
+      assistantEl.remove();
+    }
+
+    // ── goto_search: take over the main search bar and load that results page ──
+    if (name === 'goto_search') {
+      appendToolIndicator('<span class="sk-ai-tool-icon">↗</span> searching for you: <em>' + escapeHtml(args.query) + '</em>' + (args.category && args.category !== 'general' ? ' <span class="sk-ai-opt-note">(' + escapeHtml(args.category) + ')</span>' : ''));
+      setBusy(false);
+      inflight = null;
+      // Persist the conversation so the panel can restore after navigation (best-effort).
+      try { sessionStorage.setItem('horizon_ai_chat', JSON.stringify(conversation)); } catch(_) {}
+      // Slight delay so the user sees the acknowledgment + the typing animation.
+      setTimeout(function(){ gotoSearch(args.query, args.category); }, ackText ? 600 : 120);
+      return;
+    }
+
+    // ── search: background fetch, append numbered results, continue the loop ──
+    if (name !== 'search') {
+      appendError('unknown tool: ' + name);
+      setBusy(false); inflight = null;
+      return;
+    }
+    var indicator = appendToolIndicator(
+      '<span class="sk-ai-tool-icon">⌕</span> searching: <em>' + escapeHtml(args.query) + '</em>'
+      + (args.category && args.category !== 'general' ? ' <span class="sk-ai-opt-note">(' + escapeHtml(args.category) + ')</span>' : '')
+    );
+
+    runSearchTool(args)
+      .then(function(results){
+        indicator.innerHTML = '<span class="sk-ai-tool-icon">⌕</span> searched: <em>' + escapeHtml(args.query) + '</em>';
+        var startIdx = appendToolResults(results);
+        body.appendChild(renderToolResultsBlock(startIdx, results, args.query, args.category));
+        body.scrollTop = body.scrollHeight;
+
+        // Numbered tool message so the model can cite with the new indices.
+        var toolContent = 'New results from search("' + args.query + '"). Cite these with the bracket numbers shown:\n\n' +
+          results.map(function(r, i){
+            var idx = startIdx + i;
+            return '[' + idx + '] ' + r.title +
+              '\nsource: ' + (r.source || '') +
+              '\nurl: ' + (r.url || '') +
+              '\nsnippet: ' + (r.snippet || '');
+          }).join('\n\n');
+
+        messages.push({ role: 'assistant', content: priorContent || '', tool_calls: [call] });
+        messages.push({ role: 'tool', content: toolContent });
+        var nextEl = appendAssistant();
+        runLoop(messages, hopsLeft - 1, null, nextEl);
+      })
+      .catch(function(e){
+        indicator.classList.add('err');
+        indicator.innerHTML = '<span class="sk-ai-tool-icon">⌕</span> search failed: ' + escapeHtml(e.message || 'unknown');
+        messages.push({ role: 'assistant', content: priorContent || '', tool_calls: [call] });
+        messages.push({ role: 'tool', content: '[{"error":"search failed"}]' });
+        var nextEl = appendAssistant();
+        runLoop(messages, hopsLeft - 1, null, nextEl);
+      });
+  }
+
+  if (form) form.addEventListener('submit', function(e){
+    e.preventDefault();
+    var q = (input.value || '').trim();
+    if (!q) return;
+    if (inflight) return;
+    appendUser(q);
+    input.value = ''; input.style.height = 'auto';
+    askOllama(q);
+  });
+
+  // ─── Panel options popover (gear icon) ───────────────────────────
+  var optionsEl = document.getElementById('skAiOptions');
+  var tempEl    = document.getElementById('skAiTemp');
+  var tempVal   = document.getElementById('skAiTempVal');
+  var thinkEl   = document.getElementById('skAiThink');
+
+  function loadPanelOpts(){
+    var s = settings();
+    var t = (typeof s.temperature === 'number') ? s.temperature : 0.7;
+    tempEl.value = t;
+    tempVal.textContent = t.toFixed(1);
+    thinkEl.checked = !!s.think;
+  }
+  function savePanelOpt(patch){
+    var s = settings();
+    Object.assign(s, patch);
+    window.HorizonSettings.save(s);
+  }
+
+  window.toggleAiOptions = function(){
+    optionsEl.style.display = (optionsEl.style.display === 'none') ? 'flex' : 'none';
+  };
+
+  if (tempEl) tempEl.addEventListener('input', function(){
+    var v = parseFloat(tempEl.value);
+    tempVal.textContent = v.toFixed(1);
+    savePanelOpt({temperature: v});
+  });
+  if (thinkEl) thinkEl.addEventListener('change', function(){
+    savePanelOpt({think: thinkEl.checked});
+  });
+  loadPanelOpts();
+
+  // ─── Restore conversation after a goto_search navigation ─────────
+  // The panel saved its convo to sessionStorage right before navigating.
+  // On the new page, re-render bubbles and pop the panel open.
+  try {
+    var saved = sessionStorage.getItem('horizon_ai_chat');
+    if (saved) {
+      sessionStorage.removeItem('horizon_ai_chat');
+      var msgs = JSON.parse(saved);
+      if (Array.isArray(msgs) && msgs.length) {
+        conversation = msgs.slice();
+        clearEmpty();
+        msgs.forEach(function(m){
+          if (m.role === 'user') {
+            var d = document.createElement('div');
+            d.className = 'sk-ai-msg sk-ai-msg-user';
+            d.textContent = m.content || '';
+            body.appendChild(d);
+          } else if (m.role === 'assistant' && (m.content || '').trim()) {
+            var d2 = document.createElement('div');
+            d2.className = 'sk-ai-msg sk-ai-msg-ai';
+            body.appendChild(d2);
+            renderWithCitations(d2, m.content);
+          }
+        });
+        body.scrollTop = body.scrollHeight;
+        // Only auto-open if AI is configured; otherwise the closed pill is fine.
+        if (configured()) setTimeout(function(){ openAiPanel(); }, 120);
+      }
+    }
+  } catch(_) {}
+
+  // Esc closes the panel (modal already has its own)
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && panel.classList.contains('open')) closeAiPanel();
+  });
+
+  document.addEventListener('horizon:settings-changed', syncToggle);
+  syncToggle();
+})();
+</script>
+{% endblock %}

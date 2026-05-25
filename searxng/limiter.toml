@@ -1,0 +1,3 @@
+# Private instance — limiter disabled, this file just silences the missing config warning.
+[botdetection.ip_limit]
+link_token = false

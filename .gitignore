@@ -1,0 +1,23 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Deploy-specific config (use settings.example.yml as the template)
+searxng/settings.yml
+
+# Runtime state
+**/valkey-data/
+**/__pycache__/
+*.pyc
+
+# Editor / OS junk
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Local-only docs / scratch
+NOTES.md
+*.local.*

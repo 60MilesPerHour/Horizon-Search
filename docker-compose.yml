@@ -1,0 +1,70 @@
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: searxng-valkey
+    command: valkey-server --save 30 1 --loglevel warning
+    restart: unless-stopped
+    networks:
+      - searxng
+    volumes:
+      - valkey-data:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "1"
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    networks:
+      - searxng
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./searxng:/etc/searxng:rw
+      - ./searxng/sxng-ltr.min.css:/usr/local/searxng/searx/static/themes/simple/sxng-ltr.min.css:ro
+      - ./templates/base.html:/usr/local/searxng/searx/templates/simple/base.html:ro
+      - ./templates/results.html:/usr/local/searxng/searx/templates/simple/results.html:ro
+      - ./templates/index.html:/usr/local/searxng/searx/templates/simple/index.html:ro
+      - ./templates/page_with_header.html:/usr/local/searxng/searx/templates/simple/page_with_header.html:ro
+      - ./infopage/en/about.md:/usr/local/searxng/searx/infopage/en/about.md:ro
+      - ./infopage/en/search-syntax.md:/usr/local/searxng/searx/infopage/en/search-syntax.md:ro
+      - ./searxng/favicon.svg:/usr/local/searxng/searx/static/themes/simple/img/favicon.svg:ro
+      - ./searxng/horizon-logo.png:/usr/local/searxng/searx/static/themes/simple/img/horizon-logo.png:ro
+    environment:
+      - SEARXNG_VALKEY_URL=redis://valkey:6379/0
+      - GRANIAN_WORKERS=2
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "1"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    depends_on:
+      - valkey
+
+networks:
+  searxng:
+    driver: bridge
+
+volumes:
+  valkey-data:
