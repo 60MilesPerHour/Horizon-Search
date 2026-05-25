@@ -247,6 +247,7 @@
     .sk-hz-toggle input { accent-color:var(--accent); width:16px; height:16px; cursor:pointer; }
     .sk-hz-row { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
     .sk-hz-label { font-size:12px; color:var(--text-dim); font-weight:500; letter-spacing:0.2px; }
+    .sk-hz-opt { color:var(--text-dim); font-weight:400; opacity:0.7; }
     .sk-hz-input, .sk-hz-modal select.sk-hz-input { background:#0f0f10 !important; border:1px solid var(--border) !important; border-radius:6px !important; padding:9px 12px !important; color:var(--text) !important; font-family:inherit !important; font-size:13px !important; outline:none; transition:border-color 0.15s; width:100%; }
     .sk-hz-input:focus { border-color:var(--accent) !important; }
     .sk-hz-actions { display:flex; align-items:center; gap:12px; margin-top:6px; margin-bottom:14px; flex-wrap:wrap; }
@@ -257,6 +258,7 @@
     .sk-hz-status { font-size:12px; color:var(--text-mid); }
     .sk-hz-status.ok { color:#9be09b; }
     .sk-hz-status.err { color:#ff8b8b; }
+    .sk-hz-status.warn { color:#ffc66d; }
     .sk-hz-hint { font-size:11px; color:var(--text-dim); line-height:1.55; }
     .sk-hz-hint code { background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px; font-size:11px; color:var(--text); }
   </style>
@@ -298,6 +300,10 @@
             <input type="text" id="skAiUrl" class="sk-hz-input" placeholder="http://192.168.1.50:11434" autocomplete="off" autocapitalize="none" spellcheck="false">
           </div>
           <div class="sk-hz-row">
+            <label class="sk-hz-label" for="skAiUrlBackup">Backup URL <span class="sk-hz-opt">(optional)</span></label>
+            <input type="text" id="skAiUrlBackup" class="sk-hz-input" placeholder="http://10.0.0.50:11434 — used automatically if the primary is unreachable" autocomplete="off" autocapitalize="none" spellcheck="false">
+          </div>
+          <div class="sk-hz-row">
             <label class="sk-hz-label" for="skAiModel">Model</label>
             <select id="skAiModel" class="sk-hz-input">
               <option value="">— test connection to load models —</option>
@@ -321,8 +327,8 @@
   window.HorizonSettings = (function(){
     var KEY = 'horizon_ai';
     function load() {
-      try { return Object.assign({enabled:false, url:'', model:''}, JSON.parse(localStorage.getItem(KEY) || '{}')); }
-      catch(e) { return {enabled:false, url:'', model:''}; }
+      try { return Object.assign({enabled:false, url:'', urlBackup:'', model:''}, JSON.parse(localStorage.getItem(KEY) || '{}')); }
+      catch(e) { return {enabled:false, url:'', urlBackup:'', model:''}; }
     }
     function save(s) { localStorage.setItem(KEY, JSON.stringify(s)); }
     return { load: load, save: save };
@@ -332,6 +338,7 @@
     var s = window.HorizonSettings.load();
     document.getElementById('skAiEnabled').checked = !!s.enabled;
     document.getElementById('skAiUrl').value = s.url || '';
+    document.getElementById('skAiUrlBackup').value = s.urlBackup || '';
     var sel = document.getElementById('skAiModel');
     sel.innerHTML = s.model
       ? '<option value="' + s.model.replace(/"/g,'&quot;') + '">' + s.model + '</option>'
@@ -348,6 +355,7 @@
 
   function saveHorizonSettings() {
     var url = (document.getElementById('skAiUrl').value || '').trim().replace(/\/+$/, '');
+    var urlBackup = (document.getElementById('skAiUrlBackup').value || '').trim().replace(/\/+$/, '');
     var model = document.getElementById('skAiModel').value || '';
     var enabled = document.getElementById('skAiEnabled').checked;
     if (enabled && (!url || !model)) {
@@ -356,7 +364,8 @@
       st.className = 'sk-hz-status err';
       return;
     }
-    window.HorizonSettings.save({ enabled: enabled, url: url, model: model });
+    var prev = window.HorizonSettings.load();
+    window.HorizonSettings.save(Object.assign({}, prev, { enabled: enabled, url: url, urlBackup: urlBackup, model: model }));
     closeHorizonSettings();
     document.dispatchEvent(new CustomEvent('horizon:settings-changed'));
   }
@@ -407,8 +416,24 @@
           opt.value = name; opt.textContent = name; sel.appendChild(opt);
         });
         if (prev && toolModels.indexOf(prev) !== -1) sel.value = prev;
-        status.textContent = 'connected · ' + toolModels.length + ' tool-capable model' + (toolModels.length===1?'':'s');
+        var base = 'connected · ' + toolModels.length + ' tool-capable model' + (toolModels.length===1?'':'s');
+        var backup = (document.getElementById('skAiUrlBackup').value || '').trim().replace(/\/+$/, '');
+        if (!backup) {
+          status.textContent = base;
+          status.className = 'sk-hz-status ok';
+          return;
+        }
+        status.textContent = base + ' · probing backup…';
         status.className = 'sk-hz-status ok';
+        fetch(backup + '/api/tags', { headers: { 'Accept': 'application/json' } })
+          .then(function(r){
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            status.textContent = base + ' · backup reachable';
+          })
+          .catch(function(){
+            status.textContent = base + ' · backup unreachable';
+            status.className = 'sk-hz-status warn';
+          });
       })
       .catch(function(e){
         var msg = (e && e.message) || 'failed';

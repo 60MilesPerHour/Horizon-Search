@@ -8,6 +8,7 @@ Sibling project to [**Horizon**](https://github.com/60MilesPerHour/Horizon), the
 - Card mosaic for results, news, and videos
 - Maps tab powered by Foursquare + OpenStreetMap (Leaflet)
 - Optional AI side panel that connects directly to your own Ollama server — no inference data ever touches the Horizon backend
+- Primary + backup Ollama URL with automatic failover (mirrors main Horizon)
 - Agentic loop: the AI can drive the search bar on your behalf (`goto_search`) or pull in extra context invisibly (`search`)
 
 ## Quick start
@@ -37,7 +38,9 @@ Default port: `:8888`. Open `http://localhost:8888`.
 
 ## AI side panel (optional)
 
-Bring-your-own Ollama. Click `horizon` in the bottom bar → enable AI panel → enter your Ollama URL + pick a tool-capable model → save. The pill in the search row turns orange when the panel is open.
+Bring-your-own Ollama. Click `horizon` in the bottom bar → enable AI panel → enter your Ollama URL (optionally a backup URL) + pick a tool-capable model → save. The pill in the search row turns orange when the panel is open.
+
+**Backup URL / failover:** if you run an Ollama box at home and another at the office, set the second as the backup. When the primary is unreachable (DNS, network, host down) the panel transparently retries the next chat request against the backup and surfaces a one-line `primary unreachable — using backup` indicator. The model dropdown is still populated from the primary, so install the same model on both hosts.
 
 > **Ollama-only by design.** No Claude / OpenAI / Gemini adapters here, and that's deliberate. Cloud providers from a browser would either require proxying inference through the SearXNG container (which would break the "no inference data ever touches the Horizon backend" promise) or stashing raw API keys in `localStorage` (strictly worse than the OS keystore the main [Horizon](https://github.com/60MilesPerHour/Horizon) app uses). Ollama dodges both because the call is loopback / LAN, never third-party. If you want a chat app on top of Claude / OpenAI / Gemini, that's what main Horizon is for.
 
